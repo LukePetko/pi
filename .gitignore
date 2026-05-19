@@ -6,6 +6,8 @@ agent/mcp-oauth/
 
 # Local/generated pi state
 agent/sessions/
+agent/cache/
+agent/landing/
 agent/mcp-cache.json
 agent/mcp-onboarding.json
 agent/ctx-mode.json

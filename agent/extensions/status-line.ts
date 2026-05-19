@@ -111,7 +111,7 @@ export default function (pi: ExtensionAPI) {
 					)
 				: "";
 		const time = timePart();
-		return `↑${n(totals.input, 0)}↓${n(totals.output)}${costPart ? ` ${costPart}` : ""} ${gray("·")} ${contextPart}${time ? ` ${gray("·")} ${time}` : ""}`;
+		return `↑${n(totals.input, 0)}↓${n(totals.output, 0)}${costPart ? ` ${costPart}` : ""} ${gray("·")} ${contextPart}${time ? ` ${gray("·")} ${time}` : ""}`;
 	}
 
 	function pathLine(ctx: ExtensionContext): string {
