@@ -1,21 +1,121 @@
+import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import type { Component, OverlayHandle } from "@mariozechner/pi-tui";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
 const PANEL_WIDTH = 68;
 const PANEL_MIN_TERMINAL_WIDTH = 80;
+const CODEX_REFRESH_MS = 60_000;
+
+type CodexLimit = {
+  limitId: string;
+  limitName?: string | null;
+  primary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number };
+  secondary?: { usedPercent?: number; windowDurationMins?: number; resetsAt?: number };
+  planType?: string | null;
+};
+
+type CodexUsage = {
+  account?: { email?: string; planType?: string };
+  limits?: CodexLimit[];
+  error?: string;
+  fetchedAt?: number;
+};
+
+function fetchCodexUsage(): Promise<CodexUsage> {
+  return new Promise((resolve) => {
+    const child = spawn("codex", ["-s", "read-only", "-a", "untrusted", "app-server"], {
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+
+    let buffer = "";
+    let accountResult: any;
+    let limitsResult: any;
+    let settled = false;
+
+    const finish = (usage: CodexUsage) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.kill();
+      resolve({ ...usage, fetchedAt: Date.now() });
+    };
+
+    const timeout = setTimeout(() => finish({ error: "codex app-server timed out" }), 25_000);
+
+    const send = (id: number, method: string, params: unknown = {}) => {
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    };
+
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk.toString();
+      for (;;) {
+        const idx = buffer.indexOf("\n");
+        if (idx === -1) break;
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id === 1) {
+            if (msg.error) return finish({ error: msg.error.message ?? JSON.stringify(msg.error) });
+            send(2, "account/read");
+            send(3, "account/rateLimits/read");
+          } else if (msg.id === 2) {
+            if (msg.error) return finish({ error: msg.error.message ?? JSON.stringify(msg.error) });
+            accountResult = msg.result;
+          } else if (msg.id === 3) {
+            if (msg.error) return finish({ error: msg.error.message ?? JSON.stringify(msg.error) });
+            limitsResult = msg.result;
+          }
+
+          if (accountResult && limitsResult) {
+            const byId = limitsResult?.rateLimitsByLimitId ?? {};
+            const limits = Object.values(byId) as CodexLimit[];
+            finish({ account: accountResult?.account, limits });
+          }
+        } catch {
+          // Ignore non-JSON log lines.
+        }
+      }
+    });
+
+    child.on("error", (error) => finish({ error: error.message }));
+
+    send(1, "initialize", { clientInfo: { name: "pi-popup", version: "0" } });
+  });
+}
 
 export default function (pi: ExtensionAPI) {
   let enabled = false;
   let handle: OverlayHandle | null = null;
   let activeTui: { requestRender: () => void } | null = null;
+  let codexUsage: CodexUsage = {};
+  let refreshTimer: ReturnType<typeof setInterval> | undefined;
+
+  async function refreshCodexUsage(): Promise<void> {
+    codexUsage = await fetchCodexUsage();
+    activeTui?.requestRender();
+  }
+
+  function startCodexRefresh(): void {
+    if (refreshTimer) return;
+    void refreshCodexUsage();
+    refreshTimer = setInterval(() => void refreshCodexUsage(), CODEX_REFRESH_MS);
+  }
+
+  function stopCodexRefresh(): void {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = undefined;
+  }
 
   function show(ctx: ExtensionContext): void {
     if (!enabled || handle) return;
 
     void ctx.ui.custom<void>((tui, theme, _keybindings, _done) => {
       activeTui = tui;
-      return new FloatingPanel(tui, theme, ctx, pi);
+      return new FloatingPanel(tui, theme, ctx, pi, () => codexUsage);
     }, {
       overlay: true,
       overlayOptions: {
@@ -31,6 +131,8 @@ export default function (pi: ExtensionAPI) {
       handle = null;
       activeTui = null;
     });
+
+    startCodexRefresh();
   }
 
   function hide(): void {
@@ -38,6 +140,7 @@ export default function (pi: ExtensionAPI) {
     handle = null;
     activeTui = null;
     h?.hide();
+    stopCodexRefresh();
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -74,6 +177,7 @@ class FloatingPanel implements Component {
     private theme: any,
     private ctx: ExtensionContext,
     private pi: ExtensionAPI,
+    private getCodexUsage: () => CodexUsage,
   ) {}
 
   private rgb(hex: string, text: string): string {
@@ -103,6 +207,45 @@ class FloatingPanel implements Component {
 
   private money(value: number): string {
     return `$${value >= 1 ? value.toFixed(2) : value.toFixed(3)}`;
+  }
+
+  private timeUntil(epochSeconds?: number): string {
+    if (!epochSeconds) return "?";
+    const ms = epochSeconds * 1000 - Date.now();
+    if (ms <= 0) return "now";
+    const mins = Math.ceil(ms / 60_000);
+    if (mins < 60) return `${mins}m`;
+    const hours = Math.floor(mins / 60);
+    const rem = mins % 60;
+    if (hours < 24) return rem ? `${hours}h ${rem}m` : `${hours}h`;
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    return remHours ? `${days}d ${remHours}h` : `${days}d`;
+  }
+
+  private windowLabel(mins?: number): string {
+    if (!mins) return "?";
+    if (mins === 300) return "5h";
+    if (mins === 10080) return "week";
+    if (mins < 60) return `${mins}m`;
+    if (mins < 1440) return `${mins / 60}h`;
+    return `${mins / 1440}d`;
+  }
+
+  private usageBar(percent?: number): string {
+    const width = 10;
+    if (percent == null || !Number.isFinite(percent)) return `${this.gray(" ".repeat(width))} ${"?%".padStart(4)}`;
+
+    const clamped = Math.max(0, Math.min(100, percent));
+    const units = Math.round((clamped / 100) * width * 4); // 4 sub-levels per cell: ░▒▓█
+    const full = Math.floor(units / 4);
+    const rem = units % 4;
+    const color = clamped >= 90 ? "#fb7185" : clamped >= 70 ? "#fbbf24" : "#86efac";
+    const partial = rem === 1 ? "░" : rem === 2 ? "▒" : rem === 3 ? "▓" : "";
+    const empty = Math.max(0, width - full - (partial ? 1 : 0));
+    const filled = `${"█".repeat(full)}${partial}`;
+    const blocks = `${this.rgb(color, filled)}${this.gray("·".repeat(empty))}`;
+    return `${blocks} ${`${percent}%`.padStart(4)}`;
   }
 
   private sessionTotals() {
@@ -157,6 +300,16 @@ class FloatingPanel implements Component {
       ? `${context.tokens == null ? "?" : this.n(context.tokens)}/${context.contextWindow == null ? "?" : this.n(context.contextWindow)} (${context.percent == null ? "?" : this.n(context.percent)}%)`
       : "?/? (?)";
     const priceText = `${this.money(totals.cost)}${totals.usingSubscription ? " (sub)" : ""}`;
+    const codex = this.getCodexUsage();
+    const mainCodex = codex.limits?.find((limit) => limit.limitId === "codex") ?? codex.limits?.[0];
+    const codexRows = codex.error
+      ? [row(this.rgb("#fb7185", `Codex       ${codex.error}`))]
+      : mainCodex
+        ? [
+            row(`5h          ${this.usageBar(mainCodex.primary?.usedPercent)} ${this.gray(`resets ${this.timeUntil(mainCodex.primary?.resetsAt)}`)}`),
+            row(`week        ${this.usageBar(mainCodex.secondary?.usedPercent)} ${this.gray(`resets ${this.timeUntil(mainCodex.secondary?.resetsAt)}`)}`),
+          ]
+        : [row(`Codex       ${this.gray("loading...")}`)];
 
     return [
       `${border("╭")}${border("─".repeat(innerWidth + padX * 2))}${border("╮")}`,
@@ -173,8 +326,14 @@ class FloatingPanel implements Component {
       row(`Price       ${this.rgb("#fb923c", priceText)}`),
       row(`Context     ${this.gray(contextText)}`),
       row(),
+      row(this.theme.bold("Codex")),
+      ...codexRows,
+      row(),
       row(this.theme.bold("MCP")),
       row(`${this.rgb("#86efac", "•")} Atlassian ${this.gray("Connected")}`),
+      row(),
+      row(this.theme.bold("Project")),
+      row(`cwd         ${this.gray(this.ctx.cwd)}`),
       row(),
       row(),
       `${border("╰")}${border("─".repeat(innerWidth + padX * 2))}${border("╯")}`,

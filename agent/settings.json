@@ -5,7 +5,8 @@
   "defaultThinkingLevel": "low",
   "packages": [
     "npm:pi-mermaid",
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "npm:pi-web-access"
   ],
   "hideThinkingBlock": false
 }
