@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "types": ["node"],
+    "typeRoots": [
+      "./node_modules/@types",
+      "/Users/lukaspetko/.bun/install/global/node_modules/@types"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@mariozechner/pi-coding-agent": [
+        "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/index.d.ts",
+        "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/index.js"
+      ],
+      "@mariozechner/pi-tui": [
+        "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-tui/dist/tui.d.ts",
+        "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-tui/dist/tui.js"
+      ],
+      "typebox": [
+        "/Users/lukaspetko/.bun/install/global/node_modules/typebox/build/esm/index.d.ts"
+      ]
+    }
+  },
+  "include": ["agent/extensions/**/*.ts"]
+}

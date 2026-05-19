@@ -6,7 +6,9 @@
   "packages": [
     "npm:pi-mermaid",
     "npm:pi-mcp-adapter",
-    "npm:pi-web-access"
+    "npm:pi-web-access",
+    "npm:pi-lens",
+    "npm:context-mode"
   ],
   "hideThinkingBlock": false
 }

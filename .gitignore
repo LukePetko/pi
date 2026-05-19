@@ -8,6 +8,12 @@ agent/mcp-oauth/
 agent/sessions/
 agent/mcp-cache.json
 agent/mcp-onboarding.json
+agent/ctx-mode.json
+
+# Tool-generated local state
+.pi-lens/
+.pi-lense/
+context-mode/
 
 # Package/dependency caches if extensions grow deps
 node_modules/
