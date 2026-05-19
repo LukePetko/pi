@@ -1,0 +1,29 @@
+# Secrets / auth
+agent/auth.json
+agent/mcp-oauth/
+**/.env
+**/.env.*
+
+# Local/generated pi state
+agent/sessions/
+agent/mcp-cache.json
+agent/mcp-onboarding.json
+
+# Package/dependency caches if extensions grow deps
+node_modules/
+.bun/
+.npm/
+.yarn/
+.pnpm-store/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+.DS_Store
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo

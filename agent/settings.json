@@ -1,0 +1,11 @@
+{
+  "lastChangelogVersion": "0.73.1",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "low",
+  "packages": [
+    "npm:pi-mermaid",
+    "npm:pi-mcp-adapter"
+  ],
+  "hideThinkingBlock": false
+}
