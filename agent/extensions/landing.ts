@@ -15,7 +15,6 @@ import type {
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
 const LANDING_DIR = join(process.env.HOME ?? ".", ".pi", "agent", "landing");
-const FALLBACK_IMAGE_PATH = "/Users/lukaspetko/Downloads/6Sz0NJiw_400x400.jpg";
 const WIDGET_ID = "landing";
 
 // Sharper than half-blocks, but less noisy than braille.
@@ -88,9 +87,9 @@ function imageFiles(): string[] {
 	}
 }
 
-function currentImage(): string {
+function currentImage(): string | undefined {
 	const files = imageFiles();
-	if (files.length === 0) return FALLBACK_IMAGE_PATH;
+	if (files.length === 0) return undefined;
 	return files[Math.floor(Math.random() * files.length)]!;
 }
 
@@ -157,6 +156,8 @@ function prepareImage(imagePath: string, outputPath: string): Promise<string> {
 
 async function renderImage(force = false): Promise<string[]> {
 	const imagePath = currentImage();
+	if (!imagePath) return [];
+
 	const cachePath = imageCachePath(imagePath);
 	const outputPath = processedImagePath(imagePath);
 

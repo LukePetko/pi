@@ -16,6 +16,7 @@ agent/ctx-mode.json
 .pi-lens/
 .pi-lense/
 context-mode/
+npm/
 
 # Package/dependency caches if extensions grow deps
 node_modules/
