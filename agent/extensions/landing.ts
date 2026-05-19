@@ -32,28 +32,28 @@ const CHAFA_ARGS = [
 
 type Rgb = [number, number, number];
 const RESET = "\x1b[0m";
-const BOLD = "\x1b[1m";
-const PALETTE: Rgb[] = [
-	[236, 72, 153],
-	[168, 85, 247],
+const MODEL_PALETTE: Rgb[] = [
+	[103, 232, 249],
 	[125, 211, 252],
-	[244, 214, 255],
-	[125, 211, 252],
-	[168, 85, 247],
+	[186, 230, 253],
+];
+const DIR_PALETTE: Rgb[] = [
+	[192, 132, 252],
+	[216, 180, 254],
+	[233, 213, 255],
 ];
 
 function mix(a: number, b: number, t: number): number {
 	return Math.round(a + (b - a) * t);
 }
 
-function colorAt(position: number): Rgb {
-	const wrapped = ((position % 1) + 1) % 1;
-	const scaled = wrapped * PALETTE.length;
+function colorAt(position: number, palette: Rgb[]): Rgb {
+	const scaled = (((position % 1) + 1) % 1) * palette.length;
 	const index = Math.floor(scaled);
-	const next = (index + 1) % PALETTE.length;
+	const next = (index + 1) % palette.length;
 	const t = scaled - index;
-	const a = PALETTE[index]!;
-	const b = PALETTE[next]!;
+	const a = palette[index]!;
+	const b = palette[next]!;
 	return [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
 }
 
@@ -61,12 +61,12 @@ function fg([r, g, b]: Rgb, text: string): string {
 	return `\x1b[38;2;${r};${g};${b}m${text}${RESET}`;
 }
 
-function gradient(text: string, phase = 0): string {
+function gradient(text: string, palette: Rgb[]): string {
 	const chars = [...text];
 	const span = Math.max(chars.length - 1, 1);
 	return chars
 		.map((char, index) =>
-			char === " " ? char : fg(colorAt(index / span + phase), char),
+			char === " " ? char : fg(colorAt(index / span, palette), char),
 		)
 		.join("");
 }
@@ -185,6 +185,11 @@ async function renderImage(force = false): Promise<string[]> {
 	});
 }
 
+function clearTerminal(): void {
+	if (!process.stdout.isTTY) return;
+	process.stdout.write("\x1b[2J\x1b[3J\x1b[H");
+}
+
 function projectName(ctx: ExtensionContext): string {
 	return ctx.cwd.split("/").filter(Boolean).at(-1) ?? "session";
 }
@@ -197,13 +202,12 @@ function compose(
 	const model = (ctx as any).model?.id ?? "model";
 	return [
 		"",
-		`${BOLD}${gradient(center("✦ welcome back, lukas ✦", width), 0.08)}${RESET}`,
+		...image.map((line) => center(line, width)),
+		"",
 		center(
-			`${fg([161, 161, 170], projectName(ctx))} ${fg([113, 113, 122], "·")} ${fg([125, 211, 252], model)}`,
+			`${gradient(model, MODEL_PALETTE)} ${fg([113, 113, 122], "·")} ${gradient(projectName(ctx), DIR_PALETTE)}`,
 			width,
 		),
-		"",
-		...image.map((line) => center(line, width)),
 		"",
 	];
 }
@@ -238,6 +242,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		clearTerminal();
 		if (enabled) await show(ctx);
 	});
 	pi.on("model_select", async () => {

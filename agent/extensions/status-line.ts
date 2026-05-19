@@ -1,6 +1,7 @@
-import type {
-	ExtensionAPI,
-	ExtensionContext,
+import {
+	buildSessionContext,
+	type ExtensionAPI,
+	type ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth } from "@mariozechner/pi-tui";
 
@@ -57,8 +58,11 @@ export default function (pi: ExtensionAPI) {
 		totals.usingSubscription = !!(
 			model && (ctx as any).modelRegistry?.isUsingOAuth?.(model)
 		);
-		for (const entry of ctx.sessionManager.getBranch() as any[]) {
-			const msg = entry?.message;
+		const context = buildSessionContext(
+			ctx.sessionManager.getEntries() as any[],
+			ctx.sessionManager.getLeafId(),
+		);
+		for (const msg of context.messages as any[]) {
 			if (msg?.role !== "assistant" || !msg.usage) continue;
 			totals.input += msg.usage.input ?? 0;
 			totals.output += msg.usage.output ?? 0;

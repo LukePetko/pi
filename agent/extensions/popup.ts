@@ -1,9 +1,10 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
+import {
+	buildSessionContext,
+	type ExtensionAPI,
+	type ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import type { Component, OverlayHandle } from "@mariozechner/pi-tui";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
@@ -41,6 +42,14 @@ type CodexUsage = {
 	fetchedAt?: number;
 };
 
+type GitStatus = {
+	branch?: string;
+	staged: number;
+	unstaged: number;
+	untracked: number;
+	error?: string;
+};
+
 function readCtxMode(): string {
 	try {
 		if (!existsSync(CTX_MODE_PATH)) return "light";
@@ -48,6 +57,53 @@ function readCtxMode(): string {
 		return typeof mode === "string" ? mode : "light";
 	} catch {
 		return "light";
+	}
+}
+
+function runGit(args: string[], cwd: string): Promise<string> {
+	return new Promise((resolve, reject) => {
+		execFile(
+			"git",
+			args,
+			{ cwd, timeout: 2_000, maxBuffer: 1024 * 1024 },
+			(error, stdout) => {
+				if (error) reject(error);
+				else resolve(stdout.trimEnd());
+			},
+		);
+	});
+}
+
+async function fetchGitStatus(cwd: string): Promise<GitStatus> {
+	try {
+		await runGit(["rev-parse", "--is-inside-work-tree"], cwd);
+		const [branchRaw, head, status] = await Promise.all([
+			runGit(["branch", "--show-current"], cwd).catch(() => ""),
+			runGit(["rev-parse", "--short", "HEAD"], cwd).catch(() => ""),
+			runGit(["status", "--porcelain", "--untracked-files=normal"], cwd),
+		]);
+
+		let staged = 0;
+		let unstaged = 0;
+		let untracked = 0;
+		for (const line of status.split("\n")) {
+			if (!line) continue;
+			if (line.startsWith("??")) {
+				untracked++;
+				continue;
+			}
+			if (line[0] !== " ") staged++;
+			if (line[1] !== " ") unstaged++;
+		}
+
+		return {
+			branch: branchRaw || (head ? `detached@${head}` : "unknown"),
+			staged,
+			unstaged,
+			untracked,
+		};
+	} catch {
+		return { staged: 0, unstaged: 0, untracked: 0, error: "not a git repo" };
 	}
 }
 
@@ -139,10 +195,16 @@ export default function (pi: ExtensionAPI) {
 	let handle: OverlayHandle | null = null;
 	let activeTui: { requestRender: () => void } | null = null;
 	let codexUsage: CodexUsage = {};
+	let gitStatus: GitStatus = { staged: 0, unstaged: 0, untracked: 0 };
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 	async function refreshCodexUsage(): Promise<void> {
 		codexUsage = await fetchCodexUsage();
+		activeTui?.requestRender();
+	}
+
+	async function refreshGitStatus(ctx: ExtensionContext): Promise<void> {
+		gitStatus = await fetchGitStatus(ctx.cwd);
 		activeTui?.requestRender();
 	}
 
@@ -167,7 +229,15 @@ export default function (pi: ExtensionAPI) {
 			.custom<void>(
 				(tui, theme, _keybindings, _done) => {
 					activeTui = tui;
-					return new FloatingPanel(tui, theme, ctx, pi, () => codexUsage);
+					void refreshGitStatus(ctx);
+					return new FloatingPanel(
+						tui,
+						theme,
+						ctx,
+						pi,
+						() => codexUsage,
+						() => gitStatus,
+					);
 				},
 				{
 					overlay: true,
@@ -204,6 +274,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("thinking_level_select", async () => {
 		activeTui?.requestRender();
 	});
+	pi.on("input", async (_event, ctx) => {
+		void refreshGitStatus(ctx);
+		return { action: "continue" };
+	});
+	pi.on("tool_execution_end", async (_event, ctx) => {
+		void refreshGitStatus(ctx);
+	});
 	pi.on("model_select", async () => {
 		activeTui?.requestRender();
 	});
@@ -233,6 +310,7 @@ class FloatingPanel implements Component {
 		private ctx: ExtensionContext,
 		private pi: ExtensionAPI,
 		private getCodexUsage: () => CodexUsage,
+		private getGitStatus: () => GitStatus,
 	) {}
 
 	private rgb(hex: string, text: string): string {
@@ -303,8 +381,11 @@ class FloatingPanel implements Component {
 			model && (this.ctx as any).modelRegistry?.isUsingOAuth?.(model)
 		);
 
-		for (const entry of this.ctx.sessionManager.getBranch() as any[]) {
-			const msg = entry?.message;
+		const context = buildSessionContext(
+			this.ctx.sessionManager.getEntries() as any[],
+			this.ctx.sessionManager.getLeafId(),
+		);
+		for (const msg of context.messages as any[]) {
 			if (msg?.role !== "assistant" || !msg.usage) continue;
 			totals.input += msg.usage.input ?? 0;
 			totals.output += msg.usage.output ?? 0;
@@ -365,6 +446,10 @@ class FloatingPanel implements Component {
 					? "#a1a1aa"
 					: "#86efac";
 		const codex = this.getCodexUsage();
+		const git = this.getGitStatus();
+		const gitText = git.error
+			? this.gray(git.error)
+			: `${this.rgb("#c084fc", git.branch ?? "unknown")} ${this.gray("·")} ${this.rgb("#86efac", `${git.staged} staged`)} ${this.gray("·")} ${this.rgb("#fbbf24", `${git.unstaged} dirty`)} ${this.gray("·")} ${this.rgb("#fb7185", `${git.untracked} new`)}`;
 		const mainCodex =
 			codex.limits?.find((limit) => limit.limitId === "codex") ??
 			codex.limits?.[0];
@@ -404,6 +489,7 @@ class FloatingPanel implements Component {
 			row(`${this.rgb("#86efac", "•")} Atlassian ${this.gray("Connected")}`),
 			row(),
 			row(this.theme.bold("Project")),
+			row(`Git         ${gitText}`),
 			row(`cwd         ${this.gray(this.ctx.cwd)}`),
 			row(),
 			row(),

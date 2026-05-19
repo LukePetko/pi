@@ -3,6 +3,7 @@
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.5",
   "defaultThinkingLevel": "low",
+  "theme": "lukas-purple",
   "packages": [
     "npm:pi-mermaid",
     "npm:pi-mcp-adapter",
