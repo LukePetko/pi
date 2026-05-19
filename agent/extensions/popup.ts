@@ -57,13 +57,13 @@ export default function (pi: ExtensionAPI) {
     else hide();
   }
 
-  pi.registerCommand("popus", {
-    description: "Toggle the popus status panel",
+  pi.registerCommand("popup", {
+    description: "Toggle the popup status panel",
     handler: async (_args, ctx) => toggle(ctx),
   });
 
   pi.registerShortcut("ctrl+b", {
-    description: "Toggle the popus status panel",
+    description: "Toggle the popup status panel",
     handler: async (ctx) => toggle(ctx),
   });
 }
