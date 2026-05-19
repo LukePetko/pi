@@ -15,6 +15,8 @@ const TOKEN_CHARS = 4;
 
 export default function (pi: ExtensionAPI) {
   let enabled = true;
+  let hiddenBySidebar = false;
+  let lastCtx: ExtensionContext | undefined;
   let promptStartedAt = 0;
   let promptEndedAt = 0;
   let promptRunning = false;
@@ -101,8 +103,18 @@ export default function (pi: ExtensionAPI) {
   }
 
   function render(ctx: ExtensionContext): void {
+    lastCtx = ctx;
     if (!enabled) {
       ctx.ui.setFooter(undefined);
+      return;
+    }
+
+    if (hiddenBySidebar) {
+      // Keep overriding pi's built-in footer with an empty footer while the sidebar is open.
+      ctx.ui.setFooter(() => ({
+        invalidate() {},
+        render() { return []; },
+      }));
       return;
     }
 
@@ -118,6 +130,11 @@ export default function (pi: ExtensionAPI) {
       },
     }));
   }
+
+  pi.events.on("sidebar:active", (active: boolean) => {
+    hiddenBySidebar = active;
+    if (lastCtx) render(lastCtx);
+  });
 
   pi.on("session_start", async (_event, ctx) => render(ctx));
   pi.on("model_select", async (_event, ctx) => render(ctx));
