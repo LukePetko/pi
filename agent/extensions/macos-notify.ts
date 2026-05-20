@@ -52,6 +52,10 @@ const CHARACTER_TITLES: Record<string, string[]> = {
 		"Nazuna owned the night shift",
 		"Nazuna finished before sunrise",
 	],
+	"kaoruko-waguri": [
+		"Kaoruko sweetened the ending",
+		"Kaoruko finished the task with grace",
+	],
 	shisui: [
 		"Shisui brewed the right remedy",
 		"Shisui handled the rear palace errand",
