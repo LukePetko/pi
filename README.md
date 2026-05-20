@@ -119,6 +119,7 @@ pi
 - `nvim-inspect.ts` — open files/changed files in an existing Neovim tmux pane.
 - `diff.ts` — inspect changed files and open diffs/files in Neovim.
 - `lib/nvim.ts` — shared tmux/Neovim helper functions.
+- `subagent-tmux.ts` / `lib/subagent-tmux.ts` — display running background subagents in tmux window `9:subagents`.
 
 Useful Neovim commands:
 
@@ -127,6 +128,7 @@ Useful Neovim commands:
 :PiSessions        " list known Pi sessions
 :PiAuto            " reset routing to automatic cwd match
 :PiFocus           " focus selected Pi tmux pane
+:PiSubagents       " focus tmux window 9 with running subagent panes
 :PiSendSelection   " send current selection/context to Pi
 :PiSendBuffer      " send buffer to Pi
 :PiAsk             " ask Pi with current selection/buffer context
@@ -136,6 +138,7 @@ Useful Pi commands:
 
 ```text
 /nvim focus       focus connected Neovim pane
+/nvim subagents   focus tmux window 9 with running subagent panes
 /nvim sessions    list registered Pi sessions
 /nvim pull        pull current Neovim context
 /nvim             send latest Neovim context into the chat
@@ -149,6 +152,17 @@ Ctrl+\
 
 - In Neovim: focuses selected Pi pane.
 - In Pi: focuses connected Neovim pane.
+
+Subagent pane workflow:
+
+```text
+/subagent-panes show    rebuild tmux window 9 from currently running async subagents
+/subagent-panes watch   keep window 9 refreshed while background subagents start/finish
+/subagent-panes stop    stop the refresh watcher
+/subagent-panes close   close 9:subagents if it exists
+```
+
+The panes tail pi-subagents async/background output logs. They are live log panes, not separate interactive child Pi TUI sessions. Use `:PiSubagents` from Neovim or `/nvim subagents` from Pi to focus the window.
 
 ### Workflow helpers
 

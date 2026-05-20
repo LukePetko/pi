@@ -1,7 +1,9 @@
+// @ts-nocheck
 import { execFile } from "node:child_process";
 import * as net from "node:net";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { focusSubagentWindow } from "./lib/subagent-tmux";
 
 const HOST = process.env.PI_NVIM_BRIDGE_HOST || "127.0.0.1";
 const PORT = Number(process.env.PI_NVIM_BRIDGE_PORT || "47631");
@@ -425,6 +427,13 @@ export default function nvimBridge(pi: ExtensionAPI) {
 					);
 				break;
 			}
+			case "focus_subagents":
+				focusSubagentWindow()
+					.then(() => send(client, { type: "focused_subagents", ok: true }))
+					.catch((error) =>
+						send(client, { type: "error", error: error.message }),
+					);
+				break;
 			default:
 				send(client, {
 					type: "error",
@@ -608,6 +617,17 @@ export default function nvimBridge(pi: ExtensionAPI) {
 			if (mode === "focus") {
 				try {
 					await focusConnectedNvim();
+				} catch (error) {
+					ctx.ui.notify(
+						error instanceof Error ? error.message : String(error),
+						"warning",
+					);
+				}
+				return;
+			}
+			if (mode === "subagents") {
+				try {
+					await focusSubagentWindow();
 				} catch (error) {
 					ctx.ui.notify(
 						error instanceof Error ? error.message : String(error),

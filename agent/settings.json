@@ -9,7 +9,9 @@
     "npm:pi-mcp-adapter",
     "npm:pi-web-access",
     "npm:pi-lens",
-    "npm:context-mode"
+    "npm:context-mode",
+    "npm:pi-subagents",
+    "npm:pi-intercom"
   ],
   "hideThinkingBlock": false
 }
