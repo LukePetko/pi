@@ -7,7 +7,12 @@ import {
 	type ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import type { Component, OverlayHandle } from "@mariozechner/pi-tui";
-import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import {
+	Key,
+	matchesKey,
+	truncateToWidth,
+	visibleWidth,
+} from "@mariozechner/pi-tui";
 
 const PANEL_WIDTH = 68;
 const PANEL_MIN_TERMINAL_WIDTH = 80;
@@ -197,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 	let codexUsage: CodexUsage = {};
 	let gitStatus: GitStatus = { staged: 0, unstaged: 0, untracked: 0 };
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
+	let unsubscribeTerminalInput: (() => void) | undefined;
 
 	async function refreshCodexUsage(): Promise<void> {
 		codexUsage = await fetchCodexUsage();
@@ -222,8 +228,32 @@ export default function (pi: ExtensionAPI) {
 		refreshTimer = undefined;
 	}
 
+	function isToggleInput(data: string): boolean {
+		return matchesKey(data, Key.ctrl("b"));
+	}
+
+	function isTypingInput(data: string): boolean {
+		if (!data || isToggleInput(data)) return false;
+		return /[\x20-\x7e]/.test(data) || data === "\x7f" || data === "\b";
+	}
+
 	function show(ctx: ExtensionContext): void {
 		if (!enabled || handle) return;
+
+		unsubscribeTerminalInput?.();
+		unsubscribeTerminalInput = ctx.ui.onTerminalInput((data) => {
+			if (isToggleInput(data)) {
+				enabled = false;
+				hide();
+				return { consume: true };
+			}
+
+			if (handle && isTypingInput(data)) {
+				enabled = false;
+				hide();
+			}
+			return { consume: false };
+		});
 
 		void ctx.ui
 			.custom<void>(
@@ -264,6 +294,8 @@ export default function (pi: ExtensionAPI) {
 		const h = handle;
 		handle = null;
 		activeTui = null;
+		unsubscribeTerminalInput?.();
+		unsubscribeTerminalInput = undefined;
 		h?.hide();
 		stopCodexRefresh();
 	}
@@ -275,6 +307,10 @@ export default function (pi: ExtensionAPI) {
 		activeTui?.requestRender();
 	});
 	pi.on("input", async (_event, ctx) => {
+		if (handle) {
+			enabled = false;
+			hide();
+		}
 		void refreshGitStatus(ctx);
 		return { action: "continue" };
 	});
@@ -297,7 +333,7 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args, ctx) => toggle(ctx),
 	});
 
-	pi.registerShortcut("ctrl+b", {
+	pi.registerShortcut(Key.ctrl("b"), {
 		description: "Toggle the popup status panel",
 		handler: async (ctx) => toggle(ctx),
 	});
@@ -447,9 +483,14 @@ class FloatingPanel implements Component {
 					: "#86efac";
 		const codex = this.getCodexUsage();
 		const git = this.getGitStatus();
-		const gitText = git.error
+		const gitBranchText = git.error
 			? this.gray(git.error)
-			: `${this.rgb("#c084fc", git.branch ?? "unknown")} ${this.gray("·")} ${this.rgb("#86efac", `${git.staged} staged`)} ${this.gray("·")} ${this.rgb("#fbbf24", `${git.unstaged} dirty`)} ${this.gray("·")} ${this.rgb("#fb7185", `${git.untracked} new`)}`;
+			: this.rgb("#c084fc", git.branch ?? "unknown");
+		const gitChangesText = git.error
+			? this.gray("unavailable")
+			: git.staged === 0 && git.unstaged === 0 && git.untracked === 0
+				? this.rgb("#86efac", "clean")
+				: `${this.rgb("#86efac", `${git.staged} staged`)} ${this.gray("·")} ${this.rgb("#fbbf24", `${git.unstaged} dirty`)} ${this.gray("·")} ${this.rgb("#fb7185", `${git.untracked} new`)}`;
 		const mainCodex =
 			codex.limits?.find((limit) => limit.limitId === "codex") ??
 			codex.limits?.[0];
@@ -457,11 +498,9 @@ class FloatingPanel implements Component {
 			? [row(this.rgb("#fb7185", `Codex       ${codex.error}`))]
 			: mainCodex
 				? [
+						row(`5h          ${this.gray("N/A")}`),
 						row(
-							`5h          ${this.usageBar(mainCodex.primary?.usedPercent)} ${this.gray(`resets ${this.timeUntil(mainCodex.primary?.resetsAt)}`)}`,
-						),
-						row(
-							`week        ${this.usageBar(mainCodex.secondary?.usedPercent)} ${this.gray(`resets ${this.timeUntil(mainCodex.secondary?.resetsAt)}`)}`,
+							`week        ${this.usageBar(mainCodex.primary?.usedPercent)} ${this.gray(`resets ${this.timeUntil(mainCodex.primary?.resetsAt)}`)}`,
 						),
 					]
 				: [row(`Codex       ${this.gray("loading...")}`)];
@@ -489,7 +528,8 @@ class FloatingPanel implements Component {
 			row(`${this.rgb("#86efac", "•")} Atlassian ${this.gray("Connected")}`),
 			row(),
 			row(this.theme.bold("Project")),
-			row(`Git         ${gitText}`),
+			row(`Branch      ${gitBranchText}`),
+			row(`Changes     ${gitChangesText}`),
 			row(`cwd         ${this.gray(this.ctx.cwd)}`),
 			row(),
 			row(),

@@ -199,7 +199,16 @@ function notify(title: string, message: string, icon?: string): void {
 	} catch {
 		// Fall back to terminal-notifier's default sender if app generation fails.
 	}
-	const args = ["-title", title, "-message", message, "-sound", "Glass"];
+	const args = [
+		"-title",
+		title,
+		"-message",
+		message,
+		"-sound",
+		"Glass",
+		"-timeout",
+		"12",
+	];
 	if (existsSync(APP_PATH)) args.push("-sender", BUNDLE_ID);
 	if (icon) args.push("-contentImage", icon);
 	execFile("terminal-notifier", args, (error) => {
