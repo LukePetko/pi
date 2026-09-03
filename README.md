@@ -172,6 +172,38 @@ The panes tail pi-subagents async/background output logs. They are live log pane
 - `lazygit.ts` — `/lazygit` opens lazygit while temporarily suspending the Pi TUI.
 - `zsh-bang.ts` — runs `!` commands through zsh with aliases.
 - `ctx-mode.ts` — `/ctxmode off|light|strict`, `/ctxstats`, `/ctx-savings`, `/ctxclear`.
+- `personal-kb-memory.ts` — Hermes-inspired bounded memory injection from `~/.pi-knowledge/USER.md`, `MEMORY.md`, and matching project context.
+- `personal-kb-review.ts` — `/memory-review` proposes durable memory candidates; `/memory-capture text` saves approved text to KB inbox.
+
+## Personal KB memory
+
+Global KB:
+
+```text
+~/.pi-knowledge
+```
+
+Hermes-inspired core memory files:
+
+```text
+~/.pi-knowledge/USER.md
+~/.pi-knowledge/MEMORY.md
+```
+
+`personal-kb-memory.ts` automatically injects these bounded files into the system prompt, plus matching project context when available:
+
+```text
+~/.pi-knowledge/projects/<project>/context.md
+```
+
+Memory writes are manual/review-first:
+
+```text
+/memory-review          ask Pi to propose stable memory candidates from session
+/memory-capture <text>  save approved text to ~/.pi-knowledge/inbox/
+```
+
+Use the `personal-kb` skill for richer reading/searching/updating of the KB.
 
 ## Context mode
 
