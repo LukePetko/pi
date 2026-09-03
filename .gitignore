@@ -11,6 +11,9 @@ agent/intercom/
 agent/mcp-cache.json
 agent/mcp-onboarding.json
 agent/ctx-mode.json
+agent/models-store.json
+agent/run-history.jsonl
+agent/trust.json
 
 # Tool-generated local state
 .pi-lens/
@@ -29,6 +32,7 @@ node_modules/
 *.log
 *.tmp
 *.temp
+/out.txt
 .DS_Store
 
 # Editor/IDE
