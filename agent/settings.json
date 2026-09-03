@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.75.5",
+  "lastChangelogVersion": "0.84.4",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "low",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "high",
   "theme": "lukas-purple",
   "packages": [
     "npm:pi-mermaid",
@@ -11,7 +11,9 @@
     "npm:pi-lens",
     "npm:context-mode",
     "npm:pi-subagents",
-    "npm:pi-intercom"
+    "npm:pi-intercom",
+    "npm:@juicesharp/rpiv-todo",
+    "npm:@companion-ai/feynman"
   ],
   "hideThinkingBlock": false
 }
