@@ -109,6 +109,7 @@ pi
 
 - `status-line.ts` — custom footer/status line with model, thinking, tokens, context, cost, cwd, and elapsed task time.
 - `popup.ts` — `Ctrl+B` toggled status popup with model, usage, Codex limits, context-mode, MCP, project, and git status.
+- `confirm-dialog.ts` — OpenCode-style permission prompt with allow-once, session approval, and reject actions.
 - `landing.ts` — startup header with rotating image art from `agent/landing/` rendered through `chafa`.
 - `macos-notify.ts` — native macOS notification when an agent task completes.
 - `whimsical.ts` — random working messages, including anime-flavored ones.
@@ -174,6 +175,16 @@ The panes tail pi-subagents async/background output logs. They are live log pane
 - `ctx-mode.ts` — `/ctxmode off|light|strict`, `/ctxstats`, `/ctx-savings`, `/ctxclear`.
 - `personal-kb-memory.ts` — Hermes-inspired bounded memory injection from `~/.pi-knowledge/USER.md`, `MEMORY.md`, and matching project context.
 - `personal-kb-review.ts` — `/memory-review` proposes durable memory candidates; `/memory-capture text` saves approved text to KB inbox.
+
+## Confirm dialog
+
+`confirm-dialog.ts` asks before pushes from another repository, writes outside the active project, and configurable destructive shell commands. Configure each rule as `allow`, `ask`, or `deny` in:
+
+```text
+agent/confirm-dialog.json
+```
+
+`Allow always` is scoped to matching operations for the current Pi session. Run `/confirm-dialog` to see status, config path, and active approvals, or `/confirm-dialog test` to preview the UI. Config changes apply to the next tool call.
 
 ## Personal KB memory
 

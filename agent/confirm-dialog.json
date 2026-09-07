@@ -1,0 +1,33 @@
+{
+  "enabled": true,
+  "permissions": {
+    "gitPushOutsideProject": "ask",
+    "writeOutsideProject": "ask"
+  },
+  "destructiveBash": [
+    {
+      "id": "recursive-delete",
+      "action": "ask",
+      "pattern": "\\brm\\s+[^\\n]*(?:-[^\\s]*[rR][^\\s]*|--recursive)",
+      "title": "Delete files recursively"
+    },
+    {
+      "id": "destructive-git",
+      "action": "ask",
+      "pattern": "\\bgit\\s+(?:[^;&|\\n]*\\s)?(?:reset\\s+--hard|clean\\s+-[^\\s]*f|branch\\s+-D|checkout\\s+--|restore\\s+[^;&|\\n]*|push\\s+[^;&|\\n]*(?:--force(?:-with-lease)?|-f\\b|--delete\\b))",
+      "title": "Run a destructive Git command"
+    },
+    {
+      "id": "database-destruction",
+      "action": "ask",
+      "pattern": "\\b(?:drop\\s+(?:database|schema|table)|truncate\\s+table)\\b",
+      "title": "Run a destructive database command"
+    },
+    {
+      "id": "infrastructure-destruction",
+      "action": "ask",
+      "pattern": "\\b(?:terraform\\s+destroy|kubectl\\s+delete|docker\\s+(?:system|volume)\\s+prune)\\b",
+      "title": "Destroy infrastructure or shared resources"
+    }
+  ]
+}
