@@ -1,11 +1,3 @@
 {
-  "mcpServers": {
-    "Ghidra": {
-      "command": "/Users/lukaspetko/.local/bin/bridge-mcp-ghidra-secure",
-      "lifecycle": "lazy",
-      "idleTimeout": 30,
-      "requestTimeoutMs": 300000,
-      "directTools": false
-    }
-  }
+  "mcpServers": {}
 }
