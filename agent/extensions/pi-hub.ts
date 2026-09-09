@@ -15,8 +15,8 @@ import {
 	INTERCOM_EXTENSION_REGISTER_EVENT,
 	type IntercomExtensionChannel,
 	type IntercomExtensionEvent,
-} from "pi-intercom/extension-api.ts";
-import type { SessionInfo } from "pi-intercom/types.ts";
+} from "../npm/node_modules/pi-intercom/extension-api.ts";
+import type { SessionInfo } from "../npm/node_modules/pi-intercom/types.ts";
 
 const NAMESPACE = "pi-hub/v1";
 const MAX_VISIBLE_SESSIONS = 8;
