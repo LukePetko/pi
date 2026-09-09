@@ -45,7 +45,7 @@ test("Pi loads the Hub extension and registers /hub", () => {
 	assert.ok(hub, "/hub command missing");
 
 	assert.equal(hub.name, "hub");
-	assert.equal(hub.description, "Show all local Pi sessions");
+	assert.equal(hub.description, "Show and focus local Pi sessions");
 	assert.equal(hub.source, "extension");
 	assert.equal(hub.sourceInfo.path, extensionPath);
 });

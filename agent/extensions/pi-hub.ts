@@ -17,6 +17,7 @@ import {
 	type IntercomExtensionEvent,
 } from "../npm/node_modules/pi-intercom/extension-api.ts";
 import type { SessionInfo } from "../npm/node_modules/pi-intercom/types.ts";
+import { focusPiSession } from "./lib/pi-hub-navigation.ts";
 
 const NAMESPACE = "pi-hub/v1";
 const MAX_VISIBLE_SESSIONS = 8;
@@ -100,6 +101,9 @@ function contextLabel(session: SessionInfo): string {
 
 class PiHubOverlay implements Component {
 	private offset = 0;
+	private selectedId: string | undefined;
+	private navigationError: string | undefined;
+	private navigating = false;
 
 	constructor(
 		private readonly tui: { requestRender: () => void },
@@ -107,7 +111,52 @@ class PiHubOverlay implements Component {
 		private readonly done: () => void,
 		private readonly getSnapshot: () => HubSnapshot,
 		private readonly refresh: () => Promise<void>,
+		private readonly navigate: (session: SessionInfo) => void | Promise<void>,
 	) {}
+
+	private selectedSession(sessions: SessionInfo[]): SessionInfo | undefined {
+		const selected = sessions.find((session) => session.id === this.selectedId);
+		if (selected) return selected;
+		this.selectedId = sessions[0]?.id;
+		return sessions[0];
+	}
+
+	private moveSelection(offset: number): void {
+		const sessions = this.getSnapshot().sessions;
+		if (!sessions.length) return;
+		const selected = this.selectedSession(sessions);
+		const current = Math.max(
+			0,
+			sessions.findIndex((session) => session.id === selected?.id),
+		);
+		const next = Math.max(0, Math.min(sessions.length - 1, current + offset));
+		this.selectedId = sessions[next]?.id;
+		if (next < this.offset) this.offset = next;
+		if (next >= this.offset + MAX_VISIBLE_SESSIONS) {
+			this.offset = next - MAX_VISIBLE_SESSIONS + 1;
+		}
+		this.tui.requestRender();
+	}
+
+	private activateSelection(): void {
+		if (this.navigating) return;
+		const session = this.selectedSession(this.getSnapshot().sessions);
+		if (!session) return;
+		this.navigating = true;
+		this.navigationError = undefined;
+		this.tui.requestRender();
+		void Promise.resolve()
+			.then(() => this.navigate(session))
+			.then(
+				() => this.done(),
+				(error) => {
+					this.navigating = false;
+					this.navigationError =
+						error instanceof Error ? error.message : String(error);
+					this.tui.requestRender();
+				},
+			);
+	}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape) || data === "q") {
@@ -118,15 +167,14 @@ class PiHubOverlay implements Component {
 			void this.refresh();
 			return;
 		}
-
-		const sessions = this.getSnapshot().sessions;
-		const maxOffset = Math.max(0, sessions.length - MAX_VISIBLE_SESSIONS);
+		if (matchesKey(data, Key.enter)) {
+			this.activateSelection();
+			return;
+		}
 		if (matchesKey(data, Key.down) || data === "j") {
-			this.offset = Math.min(maxOffset, this.offset + 1);
-			this.tui.requestRender();
+			this.moveSelection(1);
 		} else if (matchesKey(data, Key.up) || data === "k") {
-			this.offset = Math.max(0, this.offset - 1);
-			this.tui.requestRender();
+			this.moveSelection(-1);
 		}
 	}
 
@@ -135,19 +183,29 @@ class PiHubOverlay implements Component {
 		const innerWidth = Math.max(1, panelWidth - 4);
 		const snapshot = this.getSnapshot();
 		const sessions = snapshot.sessions;
+		const selected = this.selectedSession(sessions);
+		const selectedIndex = sessions.findIndex(
+			(session) => session.id === selected?.id,
+		);
 		const maxOffset = Math.max(0, sessions.length - MAX_VISIBLE_SESSIONS);
 		this.offset = Math.min(this.offset, maxOffset);
+		if (selectedIndex >= 0 && selectedIndex < this.offset) {
+			this.offset = selectedIndex;
+		} else if (selectedIndex >= this.offset + MAX_VISIBLE_SESSIONS) {
+			this.offset = selectedIndex - MAX_VISIBLE_SESSIONS + 1;
+		}
 		const visible = sessions.slice(
 			this.offset,
 			this.offset + MAX_VISIBLE_SESSIONS,
 		);
 		const border = (text: string) => this.theme.fg("border", text);
-		const row = (content = "") => {
+		const row = (content = "", highlighted = false) => {
 			const clipped = truncateToWidth(content, innerWidth);
 			const padding = " ".repeat(
 				Math.max(0, innerWidth - visibleWidth(clipped)),
 			);
-			return `${border("│")} ${clipped}${padding} ${border("│")}`;
+			const body = ` ${clipped}${padding} `;
+			return `${border("│")}${highlighted ? this.theme.bg("selectedBg", body) : body}${border("│")}`;
 		};
 		const separator = `${border("├")}${border("─".repeat(panelWidth - 2))}${border("┤")}`;
 		let connectionColor: "success" | "warning" | "error" = "error";
@@ -166,8 +224,9 @@ class PiHubOverlay implements Component {
 			separator,
 		];
 
-		if (snapshot.error) {
-			lines.push(row(this.theme.fg("error", snapshot.error)), separator);
+		const visibleError = this.navigationError ?? snapshot.error;
+		if (visibleError) {
+			lines.push(row(this.theme.fg("error", visibleError)), separator);
 		}
 
 		if (!visible.length) {
@@ -183,6 +242,7 @@ class PiHubOverlay implements Component {
 			);
 		} else {
 			for (const session of visible) {
+				const highlighted = session.id === selected?.id;
 				const status = session.status || "unknown";
 				const active =
 					status.startsWith("tool:") || status.startsWith("thinking");
@@ -191,21 +251,24 @@ class PiHubOverlay implements Component {
 					session.id === process.env.PI_INTERCOM_SESSION_ID
 						? this.theme.fg("muted", " (this)")
 						: "";
-				const heading = `${this.theme.fg(dotColor, active ? "●" : "○")} ${this.theme.fg("text", sessionLabel(session))}${self}`;
-				const activity = `${this.theme.fg(active ? "accent" : "muted", status)} ${this.theme.fg("dim", `· ${formatAge(session.lastActivity)} ago`)}`;
+				const pointer = highlighted ? "›" : " ";
+				const heading = `${this.theme.fg("accent", pointer)} ${this.theme.fg(dotColor, active ? "●" : "○")} ${this.theme.fg("text", sessionLabel(session))}${self}`;
+				const state = highlighted && this.navigating ? "focusing…" : status;
+				const activity = `${this.theme.fg(active ? "accent" : "muted", state)} ${this.theme.fg("dim", `· ${formatAge(session.lastActivity)} ago`)}`;
 				const gap = " ".repeat(
 					Math.max(
 						1,
 						innerWidth - visibleWidth(heading) - visibleWidth(activity),
 					),
 				);
-				lines.push(row(`${heading}${gap}${activity}`));
+				lines.push(row(`${heading}${gap}${activity}`, highlighted));
 				lines.push(
 					row(
 						this.theme.fg(
 							"muted",
-							`  ${session.model} · ${compactPath(session.cwd)} · ${contextLabel(session)} · up ${formatAge(session.startedAt)}`,
+							`    ${session.model} · ${compactPath(session.cwd)} · ${contextLabel(session)} · up ${formatAge(session.startedAt)}`,
 						),
+						highlighted,
 					),
 				);
 			}
@@ -214,11 +277,11 @@ class PiHubOverlay implements Component {
 		lines.push(separator);
 		const range =
 			sessions.length > MAX_VISIBLE_SESSIONS
-				? ` · ${this.offset + 1}-${Math.min(sessions.length, this.offset + MAX_VISIBLE_SESSIONS)}/${sessions.length} · j/k scroll`
+				? ` · ${this.offset + 1}-${Math.min(sessions.length, this.offset + MAX_VISIBLE_SESSIONS)}/${sessions.length}`
 				: "";
 		lines.push(
 			row(
-				`${this.theme.fg("text", "r")} ${this.theme.fg("muted", "refresh")}  ${this.theme.fg("text", "q/esc")} ${this.theme.fg("muted", `close${range}`)}`,
+				`${this.theme.fg("text", "enter")} ${this.theme.fg("muted", "focus")}  ${this.theme.fg("text", "j/k")} ${this.theme.fg("muted", "select")}  ${this.theme.fg("text", "r")} ${this.theme.fg("muted", "refresh")}  ${this.theme.fg("text", "q/esc")} ${this.theme.fg("muted", `close${range}`)}`,
 			),
 		);
 		lines.push(
@@ -318,7 +381,7 @@ export default function piHub(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("hub", {
-		description: "Show all local Pi sessions",
+		description: "Show and focus local Pi sessions",
 		handler: async (_args, ctx: ExtensionContext) => {
 			if (!ctx.hasUI || ctx.mode !== "tui") {
 				ctx.ui.notify("Pi Hub requires an interactive terminal", "warning");
@@ -331,7 +394,14 @@ export default function piHub(pi: ExtensionAPI): void {
 						activeTui = tui;
 						ticker = setInterval(() => tui.requestRender(), 1000);
 						ticker.unref?.();
-						return new PiHubOverlay(tui, theme, done, snapshot, refresh);
+						return new PiHubOverlay(
+							tui,
+							theme,
+							done,
+							snapshot,
+							refresh,
+							(session) => focusPiSession(session.pid),
+						);
 					},
 					{
 						overlay: true,
