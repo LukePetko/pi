@@ -380,7 +380,7 @@ export default function piHub(pi: ExtensionAPI): void {
 		connection = "waiting";
 	});
 
-	pi.registerCommand("hub", {
+	const hubCommand = {
 		description: "Show and focus local Pi sessions",
 		handler: async (_args, ctx: ExtensionContext) => {
 			if (!ctx.hasUI || ctx.mode !== "tui") {
@@ -419,5 +419,10 @@ export default function piHub(pi: ExtensionAPI): void {
 				activeTui = undefined;
 			}
 		},
+	};
+	pi.registerCommand("hub", hubCommand);
+	pi.registerShortcut("ctrl+h", {
+		description: hubCommand.description,
+		handler: (ctx) => hubCommand.handler("", ctx),
 	});
 }
