@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "typeRoots": ["./agent/npm/node_modules/@types"],
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "agent/tests/**/*.ts",
+    "agent/extensions/lib/pi-hub-web/*.ts"
+  ]
+}

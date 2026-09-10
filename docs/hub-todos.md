@@ -25,10 +25,14 @@ Task changes appear within about one second. No model request is made by the das
 - Hub reads bounded task cache files, never opens session transcript files. Its existing loopback/token protection applies to the SSE snapshots.
 - Payloads retain up to 200 rows and 256 characters per subject. Counts include the whole non-deleted list, and the browser indicates any omitted rows.
 
+## TypeScript sources
+
+Browser code lives in `agent/extensions/lib/pi-hub-web/*.ts`. At startup, Hub compiles those modules in memory using the esbuild dependency already installed with its tsx runtime. The `/app.js` and `/todos.js` URLs serve the compiled results; there are no handwritten or generated JavaScript files to check in.
+
 ## Checks
 
 ```sh
-node --test agent/tests/hub-todos.test.js agent/tests/todos-web-load.test.js agent/tests/pi-hub-web-todos-browser.test.js
+node --test agent/tests/hub-todos.test.ts agent/tests/todos-web-load.test.ts agent/tests/pi-hub-web-todos-browser.test.ts
 ```
 
 The browser test uses real headless Chrome, exercises the cache-to-SSE-to-DOM flow, and checks disclosure clicks, keyboard activation, live updates, text-only rendering, terminal focus, and mobile width.

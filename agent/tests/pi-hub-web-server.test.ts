@@ -9,7 +9,7 @@ const SESSION = { id: "session-1", name: "<script>alert(1)</script>", cwd: "/pro
 
 async function fixture(t, options = {}) {
 	let state = { connected: true, sessions: [SESSION] };
-	const listeners = new Set();
+	const listeners = new Set<() => void>();
 	const focused = [];
 	const server = await startHubServer({
 		token: TOKEN,
@@ -30,7 +30,7 @@ async function fixture(t, options = {}) {
 		get(path, headers = {}) {
 			return fetch(`${server.origin}${path}`, { headers: { Authorization: `Bearer ${TOKEN}`, ...headers }, signal: AbortSignal.timeout(5_000) });
 		},
-		post(path, body = { id: SESSION.id }, headers = {}) {
+		post(path: string, body: unknown = { id: SESSION.id }, headers = {}) {
 			return fetch(`${server.origin}${path}`, {
 				method: "POST",
 				headers: { Authorization: `Bearer ${TOKEN}`, Origin: server.origin, "Content-Type": "application/json", ...headers },

@@ -18,7 +18,7 @@ The package remains installed, but its automatic extension entrypoint is disable
 This uses the overlay injection seam in rpiv-todo 2.9.0. After updating that package, run:
 
 ```sh
-node --test agent/tests/todos.test.js
+node --test agent/tests/todos.test.ts
 ```
 
 The tests exercise rendering, click/shortcut interaction, width limits, session isolation, completed-task hiding, and real tool-to-overlay wiring through Pi's extension loader.

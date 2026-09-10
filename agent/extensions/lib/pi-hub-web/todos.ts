@@ -1,4 +1,6 @@
-function createPanel(card) {
+import type { HubTodos } from "../hub-todos.ts";
+
+function createPanel(card: HTMLElement): HTMLDetailsElement {
 	const panel = document.createElement("details");
 	panel.className = "todos";
 	const summary = document.createElement("summary");
@@ -16,8 +18,8 @@ function createPanel(card) {
 }
 
 /** Reuse the details element so live SSE refreshes retain each card's open state. */
-export function renderTodos(card, todos) {
-	let panel = card.querySelector(".todos");
+export function renderTodos(card: HTMLElement, todos?: HubTodos): void {
+	let panel = card.querySelector<HTMLDetailsElement>(".todos");
 	if (!todos?.total) {
 		if (panel) panel.hidden = true;
 		return;

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { startHubServer } from "../extensions/lib/pi-hub-web-server.ts";
-import { openTestBrowser } from "./lib/hub-browser.js";
+import { openTestBrowser } from "./lib/hub-browser.ts";
 
 const chrome = process.env.PI_HUB_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
@@ -12,12 +12,12 @@ test("browser renders live cards safely, filters, focuses, and fits mobile", { s
 	let state = {
 		connected: true,
 		sessions: [
-			{ id: "billing", name: "Billing API", cwd: "~/projects/billing", model: "GPT-5.4 · high", pid: 1234, status: "thinking", contextPct: 42, lastActivity: Date.now() - 20_000 },
-			{ id: "design", name: "Design review", cwd: "~/projects/frontend", model: "Claude Opus", pid: 2345, status: "idle", contextPct: 18, lastActivity: Date.now() - 60_000 },
-			{ id: "xss", name: "<img src=x onerror=window.pwned=true>", cwd: "/safe", model: "test", pid: 3456, status: "idle", lastActivity: Date.now() },
+			{ id: "billing", name: "Billing API", cwd: "~/projects/billing", model: "GPT-5.4 · high", pid: 1234, startedAt: Date.now() - 120_000, status: "thinking", contextPct: 42, lastActivity: Date.now() - 20_000 },
+			{ id: "design", name: "Design review", cwd: "~/projects/frontend", model: "Claude Opus", pid: 2345, startedAt: Date.now() - 120_000, status: "idle", contextPct: 18, lastActivity: Date.now() - 60_000 },
+			{ id: "xss", name: "<img src=x onerror=window.pwned=true>", cwd: "/safe", model: "test", pid: 3456, startedAt: Date.now() - 120_000, status: "idle", lastActivity: Date.now() },
 		],
 	};
-	const listeners = new Set();
+	const listeners = new Set<() => void>();
 	const focused = [];
 	const hub = await startHubServer({
 		token,

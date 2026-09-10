@@ -1,11 +1,16 @@
 import { timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { loadHubBrowserAsset } from "./hub-browser-assets.ts";
+import type { HubTodos } from "./hub-todos.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SessionInfo } from "../../npm/node_modules/pi-intercom/types.ts";
 
+export interface HubSession extends SessionInfo {
+	todos?: HubTodos;
+}
+
 export interface HubSnapshot {
 	connected: boolean;
-	sessions: SessionInfo[];
+	sessions: HubSession[];
 }
 
 export interface HubSource {
@@ -24,8 +29,8 @@ export interface HubServerOptions {
 
 const ASSETS = new Map([
 	["/", ["index.html", "text/html; charset=utf-8"]],
-	["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
-	["/todos.js", ["todos.js", "text/javascript; charset=utf-8"]],
+	["/app.js", ["app.ts", "text/javascript; charset=utf-8"]],
+	["/todos.js", ["todos.ts", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
 ]);
 
@@ -65,7 +70,7 @@ export async function startHubServer(options: HubServerOptions) {
 	const assets = new Map<string, { content: string; type: string }>();
 	for (const [route, [file, type]] of ASSETS) {
 		assets.set(route, {
-			content: await readFile(new URL(`./pi-hub-web/${file}`, import.meta.url), "utf8"),
+			content: await loadHubBrowserAsset(file),
 			type,
 		});
 	}

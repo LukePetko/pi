@@ -26,13 +26,13 @@ function harness(t, mode = "tui") {
 	};
 	function install() {
 		configRevision({
-			on: (event, handler) => handlers.set(event, handler),
+			on: (event, handler) => { handlers.set(event, handler); },
 			exec: async (...args) => {
 				calls.push(args);
 				if (response instanceof Error) throw response;
 				return response;
 			},
-		});
+		} as Parameters<typeof configRevision>[0]);
 	}
 	install();
 	const emit = (event, reason) => handlers.get(event)({ reason }, ctx);

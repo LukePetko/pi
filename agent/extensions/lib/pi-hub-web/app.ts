@@ -1,33 +1,38 @@
 import { renderTodos } from "./todos.js";
+import type { HubSession, HubSnapshot } from "../pi-hub-web-server.ts";
 
-const $ = (selector) => document.querySelector(selector);
+const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
+	const element = document.querySelector<T>(selector);
+	if (!element) throw new Error(`Missing Hub element: ${selector}`);
+	return element;
+};
 const grid = $("#sessions");
 const connection = $("#connection");
 const notice = $("#notice");
-const search = $("#search");
-const cards = new Map();
-let snapshot = { connected: false, sessions: [] };
+const search = $<HTMLInputElement>("#search");
+const cards = new Map<string, HTMLElement>();
+let snapshot: HubSnapshot = { connected: false, sessions: [] };
 let online = false;
 let focusing = false;
 let stopped = false;
 let token = "";
-let controller;
+let controller: AbortController | undefined;
 
-function showNotice(message) {
+function showNotice(message: string): void {
 	notice.textContent = message;
 	notice.hidden = !message;
 }
 
-function setConnection(label, live = false) {
+function setConnection(label: string, live = false): void {
 	connection.textContent = label;
 	connection.classList.toggle("live", live);
 }
 
-function busy(session) {
+function busy(session: HubSession): boolean {
 	return /^(thinking|tool:)/.test(session.status ?? "");
 }
 
-function age(timestamp) {
+function age(timestamp: number): string {
 	const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
 	if (!Number.isFinite(seconds)) return "unknown";
 	if (seconds < 60) return `${seconds}s`;
@@ -42,7 +47,7 @@ function updateAges() {
 	}
 }
 
-async function focusSession(id) {
+async function focusSession(id: string): Promise<void> {
 	if (focusing || !online) return;
 	focusing = true;
 	showNotice("");
@@ -57,14 +62,14 @@ async function focusSession(id) {
 		const result = await response.json();
 		if (!response.ok) throw new Error(result.error || "Could not focus session");
 	} catch (error) {
-		showNotice(error.message || "Could not focus session");
+		showNotice(error instanceof Error ? error.message : "Could not focus session");
 	} finally {
 		focusing = false;
 		render();
 	}
 }
 
-function emptyMessage(sessionCount) {
+function emptyMessage(sessionCount: number): string {
 	if (!online) return "Reconnecting to the dashboard…";
 	if (!snapshot.connected) return "Waiting for Intercom…";
 	if (sessionCount) return "No matching sessions.";
@@ -83,7 +88,7 @@ function render() {
 	for (const session of sessions) {
 		let card = cards.get(session.id);
 		if (!card) {
-			card = $("#session-card").content.firstElementChild.cloneNode(true);
+			card = $<HTMLTemplateElement>("#session-card").content.firstElementChild.cloneNode(true) as HTMLElement;
 			card.querySelector("button").addEventListener("click", () => void focusSession(session.id));
 			cards.set(session.id, card);
 			grid.append(card);
@@ -107,13 +112,13 @@ function render() {
 		const card = cards.get(session.id);
 		if (grid.children[index] !== card) grid.insertBefore(card, grid.children[index] ?? null);
 	});
-	if (focused && document.activeElement !== focused && document.contains(focused)) focused.focus();
+	if (focused instanceof HTMLElement && document.activeElement !== focused && document.contains(focused)) focused.focus();
 	$("#empty").hidden = visible.length > 0;
 	$("#empty").textContent = emptyMessage(sessions.length);
 	updateAges();
 }
 
-async function stream() {
+async function stream(): Promise<void> {
 	while (!stopped) {
 		controller = new AbortController();
 		try {

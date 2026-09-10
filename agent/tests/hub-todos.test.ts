@@ -80,7 +80,7 @@ test("cache is private, identity-bound, atomic, bounded, and removable", async (
 test("source streams cached task changes without presence events and drops departed identities", async (t) => {
 	const dir = await directory(t);
 	let state = { connected: true, sessions: [session] };
-	const listeners = new Set();
+	const listeners = new Set<() => void>();
 	const source = withHubTodos({
 		snapshot: () => state,
 		subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },

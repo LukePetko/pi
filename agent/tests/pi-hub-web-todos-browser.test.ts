@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { writeHubTodos } from "../extensions/lib/hub-todos.ts";
 import { withHubTodos } from "../extensions/lib/hub-todo-source.ts";
 import { startHubServer } from "../extensions/lib/pi-hub-web-server.ts";
-import { openTestBrowser } from "./lib/hub-browser.js";
+import { openTestBrowser } from "./lib/hub-browser.ts";
 
 const chrome = process.env.PI_HUB_CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
@@ -21,7 +21,7 @@ test("Hub todo panels are safe, keyboard/click collapsible, live, independent, a
 		cwd: "/test", model: "Test model", status: "idle",
 	}));
 	let state = { connected: true, sessions };
-	const listeners = new Set();
+	const listeners = new Set<() => void>();
 	const focused = [];
 	const tasks = [
 		{ id: 1, subject: "Setup", status: "completed" },

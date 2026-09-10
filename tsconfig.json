@@ -6,7 +6,9 @@
     "strict": false,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "allowJs": true,
+    "allowJs": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "typeRoots": [
       "./node_modules/@types",
@@ -14,6 +16,9 @@
     ],
     "baseUrl": ".",
     "paths": {
+      "@earendil-works/*": [
+        "/Users/lukaspetko/.bun/install/global/node_modules/@earendil-works/*"
+      ],
       "@mariozechner/pi-coding-agent": [
         "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/index.d.ts",
         "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/index.js"
