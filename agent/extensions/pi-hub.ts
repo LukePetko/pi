@@ -3,14 +3,14 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 	Theme,
-} from "@mariozechner/pi-coding-agent";
-import type { Component } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import {
 	Key,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import {
 	INTERCOM_EXTENSION_REGISTER_EVENT,
 	type IntercomExtensionChannel,
@@ -18,6 +18,7 @@ import {
 } from "../npm/node_modules/pi-intercom/extension-api.ts";
 import type { SessionInfo } from "../npm/node_modules/pi-intercom/types.ts";
 import { focusPiSession } from "./lib/pi-hub-navigation.ts";
+import { readPermissionSummaries } from "./lib/hub-permissions.ts";
 
 const NAMESPACE = "pi-hub/v1";
 const MAX_VISIBLE_SESSIONS = 8;
@@ -33,6 +34,7 @@ function connectionState(
 }
 
 function statusDotColor(status: string): "warning" | "accent" | "muted" {
+	if (status === "Permission needed") return "warning";
 	if (status.startsWith("tool:")) return "warning";
 	if (status.startsWith("thinking")) return "accent";
 	return "muted";
@@ -67,6 +69,7 @@ function compactPath(cwd: string): string {
 }
 
 function statusRank(status = ""): number {
+	if (status === "Permission needed") return -1;
 	if (status.startsWith("tool:")) return 0;
 	if (status.startsWith("thinking")) return 1;
 	if (status.startsWith("idle")) return 2;
@@ -254,7 +257,7 @@ class PiHubOverlay implements Component {
 				const pointer = highlighted ? "›" : " ";
 				const heading = `${this.theme.fg("accent", pointer)} ${this.theme.fg(dotColor, active ? "●" : "○")} ${this.theme.fg("text", sessionLabel(session))}${self}`;
 				const state = highlighted && this.navigating ? "focusing…" : status;
-				const activity = `${this.theme.fg(active ? "accent" : "muted", state)} ${this.theme.fg("dim", `· ${formatAge(session.lastActivity)} ago`)}`;
+				const activity = `${this.theme.fg(status === "Permission needed" ? "warning" : active ? "accent" : "muted", state)} ${this.theme.fg("dim", `· ${formatAge(session.lastActivity)} ago`)}`;
 				const gap = " ".repeat(
 					Math.max(
 						1,
@@ -298,6 +301,8 @@ export default function piHub(pi: ExtensionAPI): void {
 	let connection: ConnectionState = "waiting";
 	let error: string | undefined;
 	let sessions = new Map<string, SessionInfo>();
+	let permissions = new Map<string, number>();
+	let refreshing = false;
 	let activeTui: { requestRender: () => void } | undefined;
 	let ticker: ReturnType<typeof setInterval> | undefined;
 	let generation = 0;
@@ -310,7 +315,8 @@ export default function piHub(pi: ExtensionAPI): void {
 		return {
 			connection,
 			...(error ? { error } : {}),
-			sessions: sortSessions([...sessions.values()]),
+			sessions: sortSessions([...sessions.values()].map((session) =>
+				permissions.get(session.id) === session.pid ? { ...session, status: "Permission needed" } : session)),
 		};
 	}
 
@@ -322,20 +328,23 @@ export default function piHub(pi: ExtensionAPI): void {
 			requestRender();
 			return;
 		}
+		if (refreshing) return;
+		refreshing = true;
 		try {
 			const listed = await currentChannel.listSessions();
-			if (channel !== currentChannel || generation !== currentGeneration)
-				return;
+			const waiting = await Promise.all(listed.map(async (session) =>
+				(await readPermissionSummaries(session)).length ? [session.id, session.pid] as const : undefined));
+			if (channel !== currentChannel || generation !== currentGeneration) return;
+			permissions = new Map(waiting.filter((entry): entry is readonly [string, number] => entry !== undefined));
 			sessions = new Map(listed.map((session) => [session.id, session]));
 			const state = currentChannel.snapshot();
 			connection = connectionState(state.connected, state.supported);
 			error = undefined;
 		} catch (caught) {
-			if (channel !== currentChannel || generation !== currentGeneration)
-				return;
+			if (channel !== currentChannel || generation !== currentGeneration) return;
 			connection = "offline";
 			error = caught instanceof Error ? caught.message : String(caught);
-		}
+		} finally { refreshing = false; }
 		requestRender();
 	}
 
@@ -377,6 +386,7 @@ export default function piHub(pi: ExtensionAPI): void {
 		activeTui = undefined;
 		channel = undefined;
 		sessions.clear();
+		permissions.clear();
 		connection = "waiting";
 	});
 
@@ -392,7 +402,7 @@ export default function piHub(pi: ExtensionAPI): void {
 				await ctx.ui.custom<void>(
 					(tui, theme, _keybindings, done) => {
 						activeTui = tui;
-						ticker = setInterval(() => tui.requestRender(), 1000);
+						ticker = setInterval(() => { tui.requestRender(); void refresh(); }, 1000);
 						ticker.unref?.();
 						return new PiHubOverlay(
 							tui,
@@ -400,7 +410,7 @@ export default function piHub(pi: ExtensionAPI): void {
 							done,
 							snapshot,
 							refresh,
-							(session) => focusPiSession(session.pid),
+							(session) => { focusPiSession(session.pid); },
 						);
 					},
 					{

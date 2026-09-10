@@ -4,15 +4,15 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 	Theme,
-} from "@mariozechner/pi-coding-agent";
-import type { Component } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import {
 	Key,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import {
 	classifyToolCall,
 	DEFAULT_CONFIG,
@@ -20,6 +20,8 @@ import {
 	type PermissionMatch,
 } from "./lib/confirm-dialog.ts";
 import { gitRoot } from "./lib/nvim.ts";
+import { createPermissionBroker } from "./lib/hub-permissions.ts";
+import { loadConfig as loadIntercomConfig } from "../npm/node_modules/pi-intercom/config.ts";
 
 const CONFIG_PATH = join(
 	process.env.HOME ?? ".",
@@ -200,27 +202,69 @@ class OpenCodeConfirmDialog implements Component {
 async function askPermission(
 	ctx: ExtensionContext,
 	request: PermissionMatch,
+	broker?: Awaited<ReturnType<typeof createPermissionBroker>>,
+	tool?: { toolName: string; input: unknown },
 ): Promise<Decision> {
 	if (!ctx.hasUI) return "reject";
-	if (ctx.mode !== "tui") {
-		const choice = await ctx.ui.select(
-			`△ Permission required\n\n${request.title}\n${request.description}`,
-			["Allow once", "Allow always", "Reject"],
-		);
-		if (choice === "Allow once") return "once";
-		if (choice === "Allow always") return "always";
-		return "reject";
-	}
-
-	return (
-		(await ctx.ui.custom<Decision>((tui, theme, _keybindings, done) =>
-			new OpenCodeConfirmDialog(tui, theme, request, done),
-		)) ?? "reject"
-	);
+	let finish: ((decision: Decision) => void) | undefined;
+	let resolved: Decision | undefined;
+	const controller = new AbortController();
+	const id = process.env.PI_INTERCOM_STABLE_ID?.trim() || loadIntercomConfig().stableId || ctx.sessionManager.getSessionId();
+	const ticket = broker?.request({ id, pid: process.pid }, {
+		title: request.title, description: request.description, cwd: ctx.cwd,
+		...(tool ? { toolName: tool.toolName, input: JSON.stringify(tool.input, null, 2) } : {}),
+	}, (decision) => {
+		resolved = decision;
+		controller.abort();
+		finish?.(decision);
+	});
+	void ticket?.ready.catch(() => {
+		try { ctx.ui.notify("Permission is waiting locally; Hub publication failed.", "warning"); }
+		catch { /* Publication may finish after this UI was disposed. */ }
+	});
+	try {
+		if (ctx.mode !== "tui") {
+			const choice = await ctx.ui.select(
+				`△ Permission required\n\n${request.title}\n${request.description}`,
+				["Allow once", "Allow always", "Reject"], { signal: controller.signal },
+			);
+			const decision = resolved ?? (choice === "Allow once" ? "once" : choice === "Allow always" ? "always" : "reject");
+			ticket?.decide(decision);
+			return decision;
+		}
+		return (await ctx.ui.custom<Decision>((tui, theme, _keybindings, done) => {
+			finish = done;
+			if (resolved) queueMicrotask(() => done(resolved!));
+			return new OpenCodeConfirmDialog(tui, theme, request,
+				(decision) => ticket ? ticket.decide(decision) : done(decision));
+		})) ?? "reject";
+	} finally { ticket?.cancel(); }
 }
 
-export default function confirmDialog(pi: ExtensionAPI) {
+export default function confirmDialog(pi: ExtensionAPI, brokerFactory = createPermissionBroker) {
 	const approvals = new Set<string>();
+	let broker: ReturnType<typeof createPermissionBroker> | undefined;
+	let generation = 0;
+	async function ask(ctx: ExtensionContext, request: PermissionMatch, tool?: { toolName: string; input: unknown }): Promise<Decision> {
+		if (!ctx.hasUI) return "reject";
+		const currentGeneration = generation;
+		if (!broker) {
+			const created = brokerFactory();
+			broker = created;
+			void created.catch(() => { if (broker === created) broker = undefined; });
+		}
+		const owner = await broker.catch(() => undefined);
+		if (generation !== currentGeneration) return "reject";
+		if (!owner) ctx.ui.notify("Hub permission bridge unavailable; use this terminal.", "warning");
+		return askPermission(ctx, request, owner, tool);
+	}
+	pi.on("session_shutdown", async () => {
+		generation++;
+		approvals.clear();
+		const owner = broker;
+		broker = undefined;
+		await (await owner?.catch(() => undefined))?.close();
+	});
 
 	pi.on("tool_call", async (event, ctx) => {
 		const request = classifyToolCall({
@@ -236,7 +280,7 @@ export default function confirmDialog(pi: ExtensionAPI) {
 		}
 		if (approvals.has(request.approvalKey)) return;
 
-		const decision = await askPermission(ctx, request);
+		const decision = await ask(ctx, request, { toolName: event.toolName, input: event.input });
 		if (decision === "always") {
 			approvals.add(request.approvalKey);
 			return;
@@ -249,13 +293,13 @@ export default function confirmDialog(pi: ExtensionAPI) {
 		description: "Show confirm-dialog status or preview it with /confirm-dialog test",
 		handler: async (args, ctx) => {
 			if (args.trim() === "test") {
-				const decision = await askPermission(ctx, {
+				const decision = await ask(ctx, {
 					id: "preview",
 					action: "ask",
-					title: "Preview a protected command",
-					description: "$ git -C ../another-project push origin main",
+					title: "Preview an echo command (nothing executes)",
+					description: '$ echo "Hello from Pi"',
 					approvalKey: "preview",
-				});
+				}, { toolName: "bash", input: { command: 'echo "Hello from Pi"' } });
 				ctx.ui.notify(`Preview result: ${decision}`, "info");
 				return;
 			}

@@ -20,10 +20,12 @@
         "/Users/lukaspetko/.bun/install/global/node_modules/@earendil-works/*"
       ],
       "@mariozechner/pi-coding-agent": [
+        "/Users/lukaspetko/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts",
         "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/index.d.ts",
         "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/dist/index.js"
       ],
       "@mariozechner/pi-tui": [
+        "/Users/lukaspetko/.bun/install/global/node_modules/@earendil-works/pi-tui/dist/index.d.ts",
         "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-tui/dist/tui.d.ts",
         "/Users/lukaspetko/.bun/install/global/node_modules/@mariozechner/pi-tui/dist/tui.js"
       ],

@@ -1,4 +1,6 @@
 import { renderTodos } from "./todos.js";
+import { renderPermissions, disposePermissions } from "./permissions.js";
+import type { PermissionDecision, PermissionRequest } from "../hub-permissions.ts";
 import type { HubSession, HubSnapshot } from "../pi-hub-web-server.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string): T => {
@@ -29,7 +31,7 @@ function setConnection(label: string, live = false): void {
 }
 
 function busy(session: HubSession): boolean {
-	return /^(thinking|tool:)/.test(session.status ?? "");
+	return !session.permissions?.length && /^(thinking|tool:)/.test(session.status ?? "");
 }
 
 function age(timestamp: number): string {
@@ -69,6 +71,18 @@ async function focusSession(id: string): Promise<void> {
 	}
 }
 
+async function permissionAction(id: string, requestId: string, signal: AbortSignal, decision?: PermissionDecision): Promise<{ permission?: PermissionRequest }> {
+	if (!online || !snapshot.connected) throw new Error("Dashboard is disconnected. Use the terminal.");
+	const response = await fetch(`/api/permissions/${decision ? "decision" : "inspect"}`, {
+		method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+		body: JSON.stringify({ id, requestId, decision }),
+		signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+	});
+	const result = await response.json();
+	if (!response.ok) throw new Error(result.error || "Permission request failed");
+	return result;
+}
+
 function emptyMessage(sessionCount: number): string {
 	if (!online) return "Reconnecting to the dashboard…";
 	if (!snapshot.connected) return "Waiting for Intercom…";
@@ -78,18 +92,20 @@ function emptyMessage(sessionCount: number): string {
 
 function render() {
 	const query = search.value.toLowerCase();
-	const sessions = [...snapshot.sessions].sort((a, b) => Number(busy(b)) - Number(busy(a)) || (a.name || a.id).localeCompare(b.name || b.id));
+	const sessions = [...snapshot.sessions].sort((a, b) => Number(Boolean(b.permissions?.length)) - Number(Boolean(a.permissions?.length)) ||
+			Number(busy(b)) - Number(busy(a)) || (a.name || a.id).localeCompare(b.name || b.id));
 	const visible = sessions.filter((s) => [s.name, s.cwd, s.model, s.status].join(" ").toLowerCase().includes(query));
 	$("#count").textContent = String(sessions.length);
 	$("#active-count").textContent = `${sessions.filter(busy).length} working`;
 	for (const [id, card] of cards) {
-		if (!sessions.some((session) => session.id === id)) { card.remove(); cards.delete(id); }
+		if (!sessions.some((session) => session.id === id)) { disposePermissions(card);
+			card.remove(); cards.delete(id); }
 	}
 	for (const session of sessions) {
 		let card = cards.get(session.id);
 		if (!card) {
 			card = $<HTMLTemplateElement>("#session-card").content.firstElementChild.cloneNode(true) as HTMLElement;
-			card.querySelector("button").addEventListener("click", () => void focusSession(session.id));
+			card.querySelector<HTMLButtonElement>(".card-bottom button").addEventListener("click", () => void focusSession(session.id));
 			cards.set(session.id, card);
 			grid.append(card);
 		}
@@ -97,13 +113,19 @@ function render() {
 		card.querySelector("h2").textContent = session.name || session.id.slice(0, 8);
 		card.querySelector(".project").textContent = session.cwd;
 		card.querySelector(".model").textContent = session.model;
-		card.querySelector(".activity").textContent = session.status || "unknown";
+		card.querySelector(".activity").textContent = session.permissions?.length ? "Permission needed" : session.status || "unknown";
 		card.classList.toggle("busy", busy(session));
+		card.classList.toggle("permission-needed", Boolean(session.permissions?.length));
 		const percent = Number.isFinite(session.contextPct) ? Math.max(0, Math.min(100, session.contextPct)) : null;
 		card.querySelector(".context-label").textContent = percent === null ? "unknown" : `${percent}%`;
 		card.querySelector("meter").value = percent ?? 0;
-		card.querySelector("button").disabled = focusing || !online || !snapshot.connected;
+		card.querySelector<HTMLButtonElement>(".card-bottom button").disabled = focusing || !online || !snapshot.connected;
 		renderTodos(card, session.todos);
+		renderPermissions(card, session.permissions ?? [], {
+			enabled: online && snapshot.connected,
+			inspect: async (requestId, signal) => (await permissionAction(session.id, requestId, signal)).permission!,
+			decide: async (requestId, decision, signal) => { await permissionAction(session.id, requestId, signal, decision); },
+		});
 		card.hidden = !visible.includes(session);
 	}
 	// Reorder only when needed; keep keyboard focus while moving existing cards.
@@ -159,7 +181,8 @@ async function stream(): Promise<void> {
 }
 
 search.addEventListener("input", render);
-window.addEventListener("pagehide", () => { stopped = true; controller?.abort(); });
+window.addEventListener("pagehide", () => { stopped = true; controller?.abort();
+	for (const card of cards.values()) disposePermissions(card); });
 window.addEventListener("pageshow", (event) => {
 	// Recreate one stream after bfcache restore, rather than reviving an old loop.
 	if (event.persisted) location.reload();

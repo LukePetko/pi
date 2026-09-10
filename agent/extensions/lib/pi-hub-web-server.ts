@@ -1,11 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 import { loadHubBrowserAsset } from "./hub-browser-assets.ts";
 import type { HubTodos } from "./hub-todos.ts";
+import { inspectPermission, decidePermission, readPermissionAction, PermissionUnavailable,
+	type PermissionSummary, type PermissionRequest } from "./hub-permissions.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SessionInfo } from "../../npm/node_modules/pi-intercom/types.ts";
 
 export interface HubSession extends SessionInfo {
 	todos?: HubTodos;
+	permissions?: PermissionSummary[];
 }
 
 export interface HubSnapshot {
@@ -25,12 +28,14 @@ export interface HubServerOptions {
 	focus: (pid: number) => Promise<void>;
 	onStop?: () => void;
 	idleMs?: number;
+	permissions?: { inspect: typeof inspectPermission; decide: typeof decidePermission };
 }
 
 const ASSETS = new Map([
 	["/", ["index.html", "text/html; charset=utf-8"]],
 	["/app.js", ["app.ts", "text/javascript; charset=utf-8"]],
 	["/todos.js", ["todos.ts", "text/javascript; charset=utf-8"]],
+	["/permissions.js", ["permissions.ts", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
 ]);
 
@@ -40,7 +45,8 @@ function authorized(req: IncomingMessage, token: string): boolean {
 	return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-type HubReply = { error: string } | { ok: true } | { service: "pi-hub-web"; version: 1; pid: number };
+type HubReply =
+	| { permission: PermissionRequest } | { error: string } | { ok: true } | { service: "pi-hub-web"; version: 1; pid: number };
 
 function reply(res: ServerResponse, status: number, body: HubReply): void {
 	res.writeHead(status, { "Content-Type": "application/json" });
@@ -134,6 +140,33 @@ export async function startHubServer(options: HubServerOptions) {
 		}
 	}
 
+	async function permission(req: IncomingMessage, res: ServerResponse, decide: boolean): Promise<void> {
+		if (req.headers["content-type"] !== "application/json") {
+			reply(res, 415, { error: "Expected application/json" }); return;
+		}
+		let action: Awaited<ReturnType<typeof readPermissionAction>>;
+		try {
+			action = await readPermissionAction(req);
+			if (decide !== (action.decision !== undefined)) throw new Error("Invalid decision");
+		} catch { reply(res, 400, { error: "Invalid permission action" }); return; }
+		try {
+			const session = await source.resolveSession(action.id);
+			if (!session || !Number.isSafeInteger(session.pid) || session.pid <= 1) {
+				reply(res, 404, { error: "Session is no longer available" }); return;
+			}
+			const gateway = options.permissions ?? { inspect: inspectPermission, decide: decidePermission };
+			if (decide) {
+				await gateway.decide(session, action.requestId, action.decision!);
+				reply(res, 200, { ok: true });
+			} else {
+				reply(res, 200, { permission: await gateway.inspect(session, action.requestId) });
+			}
+		} catch (error) {
+			reply(res, error instanceof PermissionUnavailable ? error.status : 503,
+				{ error: error instanceof PermissionUnavailable ? error.message : "Permission owner is unavailable. Use its terminal." });
+		}
+	}
+
 	async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		res.setHeader("Cache-Control", "no-store");
 		res.setHeader("X-Content-Type-Options", "nosniff");
@@ -172,6 +205,9 @@ export async function startHubServer(options: HubServerOptions) {
 			sendSnapshot(res);
 		} else if (req.method === "POST" && req.headers.origin === origin && route === "/api/focus") {
 			await focus(req, res);
+		} else if (req.method === "POST" && req.headers.origin === origin &&
+			(route === "/api/permissions/inspect" || route === "/api/permissions/decision")) {
+			await permission(req, res, route.endsWith("/decision"));
 		} else if (req.method === "POST" && req.headers.origin === origin && route === "/api/stop") {
 			reply(res, 200, { ok: true });
 			void close();

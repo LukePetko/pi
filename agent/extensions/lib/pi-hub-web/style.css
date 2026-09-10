@@ -28,6 +28,16 @@ h2 { font-size: 16px; font-weight: 550; margin: 0; flex: 1; overflow: hidden; te
 .busy .dot { background: #9cdec5; box-shadow: 0 0 12px #9cdec533; }
 .activity { font-size: 10px; color: #c2b9d6; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .busy .activity { color: #9cdec5; }
+.card.permission-needed { border-color: #c8a84e; }
+.permission-needed .activity { color: #edcb74; }
+.permission-needed .dot { background: #edcb74; box-shadow: 0 0 12px #edcb7433; }
+.permission-request { border-top: 1px solid #6e5a32; margin-top: 20px; padding-top: 14px; }
+.permission-request h3 { color: #edcb74; font-size: 13px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.permission-context, .permission-details p, .permission-message { color: #c5bdd6; font-size: 11px; overflow-wrap: anywhere; }
+.permission-details pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; padding: 10px; background: #15131c; border-radius: 6px; font: 11px ui-monospace, monospace; }
+.permission-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.permission-actions button { font-size: 12px; }
+.permission-actions [data-decision="once"] { color: #f0d28b; border-color: #8d7136; background: #3e321c; }
 .project { font: 12px ui-monospace, SFMono-Regular, monospace; color: #c5bdd6; margin: 24px 0 9px; overflow-wrap: anywhere; }
 .model { font-size: 12px; margin: 0 0 26px; overflow-wrap: anywhere; }
 .context { font-size: 11px; margin-bottom: 7px; }
