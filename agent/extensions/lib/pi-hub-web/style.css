@@ -1,0 +1,50 @@
+:root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; color: #e9e7f4; background: #101017; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 15% 0%, #252039 0, transparent 48%); }
+main { max-width: 1200px; margin: auto; padding: 56px 32px 24px; }
+header, .toolbar, .card-heading, .context, .card-bottom, footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+header { margin-bottom: 48px; }
+.eyebrow { font-size: 11px; letter-spacing: .2em; color: #a9a0c2; }
+h1 { font-size: 48px; letter-spacing: -.06em; margin: 12px 0; font-weight: 500; }
+h1 > span:first-child { color: #c0b1f9; }
+.mark { color: #c0b1f9; font-size: 25px; vertical-align: top; margin-left: 12px; }
+.subtitle, .toolbar, .model, .context, .age, footer { color: #a8a4b8; }
+.subtitle { font-size: 14px; }
+.connection { font-size: 12px; border: 1px solid #494454; border-radius: 24px; padding: 9px 15px; white-space: nowrap; }
+.connection.live { color: #9cdec5; border-color: #344e47; background: #182924; }
+.toolbar { margin-bottom: 24px; font-size: 14px; }
+.toolbar strong { color: #f4f0ff; font-size: 24px; margin-right: 5px; }
+#active-count { color: #9cdec5; margin-left: 12px; }
+.toolbar label { width: min(360px, 100%); }
+input { width: 100%; background: #191820; color: inherit; border: 1px solid #38333f; border-radius: 10px; padding: 12px 16px; font: inherit; }
+input::placeholder { color: #8b859d; }
+:focus-visible { outline: 2px solid #c0b1f9; outline-offset: 4px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 18px; }
+.card { background: linear-gradient(135deg, #24212e, #1a1922); border: 1px solid #38313f; border-radius: 16px; padding: 23px; min-width: 0; }
+.card.busy { border-color: #46554f; }
+.card-heading { gap: 9px; }
+h2 { font-size: 16px; font-weight: 550; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { background: #8d869d; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.busy .dot { background: #9cdec5; box-shadow: 0 0 12px #9cdec533; }
+.activity { font-size: 10px; color: #c2b9d6; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.busy .activity { color: #9cdec5; }
+.project { font: 12px ui-monospace, SFMono-Regular, monospace; color: #c5bdd6; margin: 24px 0 9px; overflow-wrap: anywhere; }
+.model { font-size: 12px; margin: 0 0 26px; overflow-wrap: anywhere; }
+.context { font-size: 11px; margin-bottom: 7px; }
+meter { width: 100%; height: 8px; display: block; background: #34303f; border-radius: 5px; border: 0; }
+meter::-webkit-meter-bar { background: #34303f; border: 0; }
+meter::-webkit-meter-optimum-value { background: #ab9ae5; }
+meter::-webkit-meter-suboptimum-value { background: #dab679; }
+meter::-webkit-meter-even-less-good-value { background: #e698a7; }
+meter::-moz-meter-bar { background: #ab9ae5; }
+.card-bottom { margin-top: 24px; font-size: 11px; }
+button { font: inherit; color: #d2c7f4; background: #30283f; border: 1px solid #4a3e5e; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+button:hover { background: #413550; }
+button:disabled { opacity: .45; cursor: default; }
+.empty { text-align: center; color: #a8a4b8; padding: 70px 16px; border: 1px dashed #393240; border-radius: 16px; }
+#notice { color: #efbd95; background: #30251e; padding: 14px; border-radius: 10px; font-size: 13px; }
+footer { border-top: 1px solid #302b38; margin-top: 44px; padding-top: 20px; font-size: 10px; letter-spacing: .04em; flex-wrap: wrap; }
+code { color: #c4b6ea; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+[hidden] { display: none; }
+@media (max-width: 600px) { main { padding: 28px 20px; } header { align-items: flex-start; gap: 10px; margin-bottom: 30px; } h1 { font-size: 40px; } .toolbar { align-items: stretch; flex-direction: column; } input { width: 100%; } .connection { font-size: 10px; padding: 8px; } }

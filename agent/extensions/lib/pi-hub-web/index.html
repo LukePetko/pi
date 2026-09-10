@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pi Hub</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow">YOUR LOCAL WORKSPACE</p><h1>Pi <span>Hub</span><span class="mark" aria-hidden="true">✦</span></h1><p class="subtitle">A little breathing room for all your sessions.</p></div>
+      <div id="connection" class="connection" role="status">Connecting…</div>
+    </header>
+    <section class="toolbar" aria-label="Session filters">
+      <div><strong id="count">0</strong> <span>sessions</span> <span id="active-count"></span></div>
+      <label><span class="sr-only">Filter sessions</span><input id="search" type="search" placeholder="Find a session, project, or model…" autocomplete="off"></label>
+    </section>
+    <p id="notice" role="status" hidden></p>
+    <div id="sessions" class="grid" aria-label="Live sessions"></div>
+    <p id="empty" class="empty">Connecting to your local sessions…</p>
+    <footer><span>LOCAL ONLY <span aria-hidden="true">·</span> No prompts or messages sent</span><span>Open: <code>/hub-web</code> <span aria-hidden="true">·</span> Stop: <code>/hub-web stop</code></span></footer>
+  </main>
+  <template id="session-card">
+    <article class="card">
+      <div class="card-heading"><span class="dot" aria-hidden="true"></span><h2></h2><span class="activity"></span></div>
+      <p class="project"></p>
+      <p class="model"></p>
+      <div class="context"><span>Context</span><span class="context-label"></span></div>
+      <meter min="0" max="100" low="60" high="85" optimum="0" aria-label="Context usage"></meter>
+      <div class="card-bottom"><span class="age"></span><button type="button">Focus terminal <span aria-hidden="true">↗</span></button></div>
+    </article>
+  </template>
+</body>
+</html>
