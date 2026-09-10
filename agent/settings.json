@@ -12,7 +12,10 @@
     "npm:context-mode",
     "npm:pi-subagents",
     "npm:pi-intercom",
-    "npm:@juicesharp/rpiv-todo",
+    {
+      "source": "npm:@juicesharp/rpiv-todo",
+      "extensions": []
+    },
     "npm:@companion-ai/feynman"
   ],
   "hideThinkingBlock": false,
