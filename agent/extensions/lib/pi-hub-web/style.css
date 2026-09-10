@@ -37,6 +37,16 @@ meter::-webkit-meter-optimum-value { background: #ab9ae5; }
 meter::-webkit-meter-suboptimum-value { background: #dab679; }
 meter::-webkit-meter-even-less-good-value { background: #e698a7; }
 meter::-moz-meter-bar { background: #ab9ae5; }
+.todos { border-top: 1px solid #38313f; margin-top: 20px; padding-top: 14px; min-width: 0; }
+.todos-summary { cursor: pointer; font-size: 12px; color: #c0b1f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.todo-current { color: #c5bdd6; }
+.todos[open] .todo-current { display: none; }
+.todo-list { list-style: none; margin: 14px 0 0; padding: 0; max-height: 240px; overflow: auto; }
+.todo-list li { display: flex; gap: 8px; margin: 8px 0; font-size: 12px; color: #a8a4b8; }
+.todo-status { flex-shrink: 0; }
+.todo-subject { min-width: 0; overflow-wrap: anywhere; }
+.todo-list [data-status="in_progress"] { color: #9cdec5; }
+.todo-list [data-status="completed"] .todo-subject { text-decoration: line-through; }
 .card-bottom { margin-top: 24px; font-size: 11px; }
 button { font: inherit; color: #d2c7f4; background: #30283f; border: 1px solid #4a3e5e; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
 button:hover { background: #413550; }

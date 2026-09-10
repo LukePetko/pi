@@ -1,3 +1,5 @@
+import { renderTodos } from "./todos.js";
+
 const $ = (selector) => document.querySelector(selector);
 const grid = $("#sessions");
 const connection = $("#connection");
@@ -96,6 +98,7 @@ function render() {
 		card.querySelector(".context-label").textContent = percent === null ? "unknown" : `${percent}%`;
 		card.querySelector("meter").value = percent ?? 0;
 		card.querySelector("button").disabled = focusing || !online || !snapshot.connected;
+		renderTodos(card, session.todos);
 		card.hidden = !visible.includes(session);
 	}
 	// Reorder only when needed; keep keyboard focus while moving existing cards.

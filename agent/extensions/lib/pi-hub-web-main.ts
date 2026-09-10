@@ -6,6 +6,7 @@ import { hubRuntimeCommand, readEndpoint } from "./pi-hub-web-launcher.ts";
 import { focusPiSession } from "./pi-hub-navigation.ts";
 import { startHubServer } from "./pi-hub-web-server.ts";
 import { IntercomHubSource } from "./pi-hub-web-source.ts";
+import { withHubTodos } from "./hub-todo-source.ts";
 
 const execute = promisify(execFile);
 
@@ -39,7 +40,7 @@ async function serve(endpointFile: string): Promise<void> {
 	}
 	process.on("SIGTERM", () => void stop());
 	process.on("SIGINT", () => void stop());
-	server = await startHubServer({ source, token, focus: (pid) => focusInWorker(pid, shutdown.signal), onStop: () => void stop() });
+	server = await startHubServer({ source: withHubTodos(source), token, focus: (pid) => focusInWorker(pid, shutdown.signal), onStop: () => void stop() });
 	const temporary = `${endpointFile}.${process.pid}.tmp`;
 	try {
 		await writeFile(temporary, JSON.stringify({ version: 1, pid: process.pid, origin: server.origin, token }), {
