@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import confirmDialog from ${moduleUrl("confirm-dialog.ts")};
 import piHub from ${moduleUrl("pi-hub.ts")};
+import { performNativePermissionAction, processBirth } from ${moduleUrl("lib/native-permission-action.ts")};
 import { createPermissionBroker, permissionDirectory, readPermissionSummaries, inspectPermission, decidePermission } from ${moduleUrl("lib/hub-permissions.ts")};
 
 export default async function (pi) {
@@ -65,7 +66,9 @@ export default async function (pi) {
 		assert.match(full.title, /nothing executes/);
 		assert.equal(notificationEvents.length, 1);
 		assert.equal(notificationEvents[0].name, "pi:permission-requested");
-		assert.deepEqual(Object.keys(notificationEvents[0].data).sort(), ["cwd", "id", "title"], "notification payload must omit command/input details");
+		assert.deepEqual(Object.keys(notificationEvents[0].data).sort(), ["broker", "cwd", "id", "title"], "notification payload must omit command/input details");
+		assert.equal(notificationEvents[0].data.id, request.id);
+		assert.deepEqual(notificationEvents[0].data.broker, { session: { id: session.id, pid: process.pid }, requestId: request.id, directory });
 		assert.equal(notificationEvents[0].data.cwd, session.cwd);
 		assert.equal(notificationEvents[0].data.title, full.title);
 		await hubHandlers.get("session_start")({}, ctx);
@@ -87,7 +90,7 @@ export default async function (pi) {
 		await hubHandlers.get("session_shutdown")({}, ctx);
 		dialog = undefined;
 		const rejected = permissionCommands.get("confirm-dialog").handler("test", ctx);
-		await waitFor(() => dialog !== undefined);
+		await waitFor(() => dialog !== undefined && notificationEvents.length === 3);
 		dialog.handleInput("\x1b");
 		await rejected;
 		await waitFor(async () => (await readPermissionSummaries(session, directory)).length === 0);
@@ -95,9 +98,17 @@ export default async function (pi) {
 		assert.equal(notificationEvents.length, 4);
 		assert.notEqual(notificationEvents[2].data.id, notificationEvents[0].data.id);
 		assert.deepEqual(notificationEvents[3], { name: "pi:permission-resolved", data: { id: notificationEvents[2].data.id } });
-		await assert.rejects(permissionCommands.get("confirm-dialog").handler("test", { ...ctx, ui: { ...ctx.ui, custom: async () => { throw new Error("UI cancelled"); } } }), /UI cancelled/);
+		dialog = undefined;
+		const nativeAccepted = permissionCommands.get("confirm-dialog").handler("test", ctx);
+		await waitFor(() => dialog !== undefined && notificationEvents.length === 5);
+		await performNativePermissionAction({ version: 1, actionable: true, target: { pid: process.pid, startedAt: processBirth(process.pid) }, broker: notificationEvents[4].data.broker }, "accept");
+		await nativeAccepted;
 		assert.equal(notificationEvents.length, 6);
 		assert.deepEqual(notificationEvents[5], { name: "pi:permission-resolved", data: { id: notificationEvents[4].data.id } });
+		assert.equal(doneCount, 3, "native Accept closes the same live local dialog");
+		await assert.rejects(permissionCommands.get("confirm-dialog").handler("test", { ...ctx, ui: { ...ctx.ui, custom: async () => { throw new Error("UI cancelled"); } } }), /UI cancelled/);
+		await delay(20);
+		assert.equal(notificationEvents.length, 6, "cancelled UI cannot publish a late alert");
 		await permissionCommands.get("confirm-dialog").handler("test", { ...ctx, hasUI: false });
 		assert.equal(notificationEvents.length, 6, "headless requests must not create alerts");
 		const delayedHandlers = new Map(), delayedCommands = new Map();
@@ -107,7 +118,7 @@ export default async function (pi) {
 		const shutdown = delayedHandlers.get("session_shutdown")({}, ctx);
 		release(await createPermissionBroker(directory));
 		await Promise.all([waiting, shutdown]);
-		assert.equal(doneCount, 2, "shutdown during broker startup must not open a late dialog");
+		assert.equal(doneCount, 3, "shutdown during broker startup must not open a late dialog");
 		assert.equal(notificationEvents.length, 6, "shutdown during startup must not create a late alert");
 	} finally { closeHub?.(); await permissionHandlers.get("session_shutdown")({}, ctx); }
 	pi.registerCommand("permission-integration-passed", { handler: async () => {} });

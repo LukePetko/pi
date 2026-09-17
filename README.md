@@ -311,7 +311,7 @@ Ctrl+\   switch between Pi and Neovim tmux panes
 
 Click **Show** (or the notification body) to focus the originating Pi process using Hub's tmux/AeroSpace navigation. The process must still be running; stale notifications never reopen a session or target a recycled process ID. Existing notifications sent before this feature do not gain click actions.
 
-Permission requests produce a separate persistent **Permission needed** alert with the project name and permission title. **Show** focuses the waiting session without approving anything. The alert clears on a local/Hub decision, cancellation, or shutdown. Preview with `/confirm-dialog test`; see [permission notifications](docs/hub-permissions.md). Unlike completion notifications, permission alerts skip the non-removable AppleScript fallback.
+Permission requests use the native **Pi Permissions** helper: **Accept once**, **Reject**, or **Show** (possibly under macOS's **Options** menu). Accept/Reject require unlocking the Mac; Show only focuses Pi. The alert clears on a local/Hub/native decision, cancellation, or shutdown. Allow **Pi Permissions** notifications separately and select **Alerts/Persistent**. The helper compiles locally using Xcode Command Line Tools; if unavailable, a removable Show-only terminal-notifier alert is used instead. Preview with `/confirm-dialog test`; see [permission notifications](docs/hub-permissions.md). No permission path uses the non-removable AppleScript fallback.
 
 Completion notification format:
 

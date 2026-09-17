@@ -16,7 +16,8 @@ import {
 	findNotifierApp,
 	notificationFocusCommand,
 } from "./lib/macos-notify-click.ts";
-import { watchPermissionNotifications } from "./lib/permission-notifications.ts";
+import { watchPermissionNotifications, type ShowNotice } from "./lib/permission-notifications.ts";
+import { createNativePermissionSender } from "./lib/native-permission-notifications.ts";
 
 const HOME = process.env.HOME ?? ".";
 const AGENT_DIR = join(HOME, ".pi", "agent");
@@ -256,15 +257,20 @@ function notify(
 	};
 }
 
-export default function (pi: ExtensionAPI) {
+export const legacyPermissionSender: ShowNotice = (notice, group, onDelivered) =>
+	notify("Permission needed", `${projectName(notice)} · ${notice.title}`, undefined, { group, onDelivered });
+
+export default function (
+	pi: ExtensionAPI,
+	permissionSender: ShowNotice = createNativePermissionSender({ fallback: legacyPermissionSender }),
+) {
 	let startedAt = 0;
 	let lastCtx: ExtensionContext | undefined;
 	let stopPermissions: (() => void) | undefined;
 
 	pi.on("session_start", () => {
 		stopPermissions?.();
-		stopPermissions = watchPermissionNotifications(pi.events, (notice, group, onDelivered) =>
-			notify("Permission needed", `${projectName(notice)} · ${notice.title}`, undefined, { group, onDelivered }));
+		stopPermissions = watchPermissionNotifications(pi.events, permissionSender);
 	});
 	pi.on("session_shutdown", () => {
 		stopPermissions?.();

@@ -36,7 +36,7 @@ async function harness(t, customAppFails = false) {
 		events: {
 			on(name, handler) { bus.on(name, handler); return () => { bus.off(name, handler); }; },
 		},
-	});
+	}, extension.legacyPermissionSender);
 	assert.equal(calls.length, 0, "factory must not send notifications");
 	handlers.get("session_start")();
 	const request = (id = "permission-a") => bus.emit(PERMISSION_REQUESTED, {

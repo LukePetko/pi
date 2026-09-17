@@ -196,6 +196,7 @@ export async function createPermissionBroker(directory = permissionDirectory()) 
 	origin = `http://127.0.0.1:${address.port}`;
 
 	return {
+		directory,
 		request(session: PermissionIdentity, details: Omit<PermissionRequest, "id" | "createdAt">, done: (decision: LocalPermissionDecision) => void): PermissionTicket {
 			if (closed || pending.size >= 32) throw new Error("Permission bridge is unavailable");
 			const id = randomUUID();

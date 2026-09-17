@@ -47,8 +47,8 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = Array(CommandLine.arguments.dropFirst())
-        guard let operation = args.first else {
-            // Notification activation arrives through the delegate, not command-line arguments.
+        guard let operation = args.first, !operation.hasPrefix("-") else {
+            // LaunchServices may supply Cocoa flags; activation arrives through the delegate.
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
                 if !self.receivedAction { self.finish(["error": "No action received"], status: 1) }
             }
@@ -114,7 +114,14 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         content.categoryIdentifier = notice.actionable ? permissionCategory : showCategory
         // Callback details stay in the private record, never in Notification Center's payload.
         content.userInfo = ["id": id]
-        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil), withCompletionHandler: completion)
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
+            // Covers removal racing add(), including a retry after a failed action.
+            if !FileManager.default.fileExists(atPath: self.recordURL(id).path) {
+                self.center.removePendingNotificationRequests(withIdentifiers: [id])
+                self.center.removeDeliveredNotifications(withIdentifiers: [id])
+            }
+            completion(error)
+        }
     }
 
     private func remove(_ id: String, attempts: Int = 30) {
@@ -140,7 +147,7 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         receivedAction = true
         let action = response.actionIdentifier == UNNotificationDefaultActionIdentifier ? "show" : response.actionIdentifier
         guard actionNames.contains(action), let id = response.notification.request.content.userInfo["id"] as? String,
-              let notice = try? readNotice(id), (action == "show" || notice.actionable) else {
+              let notice = try? readNotice(id), action == "show" || notice.actionable else {
             completionHandler(); finish(["ignored": true]); return
         }
         let task = Process()

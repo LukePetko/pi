@@ -5,13 +5,18 @@ export interface PermissionNotice {
 	id: string;
 	cwd: string;
 	title: string;
+	broker?: {
+		session: { id: string; pid: number };
+		requestId: string;
+		directory: string;
+	};
 }
 
 type EventSource = {
 	on(channel: string, handler: (data: unknown) => void): () => void;
 };
 
-type ShowNotice = (
+export type ShowNotice = (
 	notice: PermissionNotice,
 	group: string,
 	delivered: () => void,

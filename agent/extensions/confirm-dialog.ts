@@ -204,8 +204,11 @@ class OpenCodeConfirmDialog implements Component {
 async function askPermission(
 	ctx: ExtensionContext,
 	request: PermissionMatch,
-	broker?: Awaited<ReturnType<typeof createPermissionBroker>>,
-	tool?: { toolName: string; input: unknown },
+	{ broker, tool, events }: {
+		broker?: Awaited<ReturnType<typeof createPermissionBroker>>;
+		tool?: { toolName: string; input: unknown };
+		events: ExtensionAPI["events"];
+	},
 ): Promise<Decision> {
 	if (!ctx.hasUI) return "reject";
 	let finish: ((decision: Decision) => void) | undefined;
@@ -220,10 +223,25 @@ async function askPermission(
 		controller.abort();
 		finish?.(decision);
 	});
-	void ticket?.ready.catch(() => {
+	const noticeId = ticket?.id ?? randomUUID();
+	let active = true;
+	let announced = false;
+	function announce(actionable: boolean): void {
+		if (!active || resolved) return;
+		announced = true;
+		events.emit(PERMISSION_REQUESTED, {
+			id: noticeId, cwd: ctx.cwd, title: request.title,
+			...(actionable && ticket && broker ? {
+				broker: { session: { id, pid: process.pid }, requestId: ticket.id, directory: broker.directory },
+			} : {}),
+		});
+	}
+	if (ticket) void ticket.ready.then(() => announce(true), () => {
 		try { ctx.ui.notify("Permission is waiting locally; Hub publication failed.", "warning"); }
 		catch { /* Publication may finish after this UI was disposed. */ }
+		announce(false);
 	});
+	else announce(false);
 	try {
 		if (ctx.mode !== "tui") {
 			const choice = await ctx.ui.select(
@@ -240,7 +258,11 @@ async function askPermission(
 			return new OpenCodeConfirmDialog(tui, theme, request,
 				(decision) => ticket ? ticket.decide(decision) : done(decision));
 		})) ?? "reject";
-	} finally { ticket?.cancel(); }
+	} finally {
+		active = false;
+		ticket?.cancel();
+		if (announced) events.emit(PERMISSION_RESOLVED, { id: noticeId });
+	}
 }
 
 export default function confirmDialog(pi: ExtensionAPI, brokerFactory = createPermissionBroker) {
@@ -258,13 +280,7 @@ export default function confirmDialog(pi: ExtensionAPI, brokerFactory = createPe
 		const owner = await broker.catch(() => undefined);
 		if (generation !== currentGeneration) return "reject";
 		if (!owner) ctx.ui.notify("Hub permission bridge unavailable; use this terminal.", "warning");
-		const id = randomUUID();
-		pi.events.emit(PERMISSION_REQUESTED, { id, cwd: ctx.cwd, title: request.title });
-		try {
-			return await askPermission(ctx, request, owner, tool);
-		} finally {
-			pi.events.emit(PERMISSION_RESOLVED, { id });
-		}
+		return askPermission(ctx, request, { broker: owner, tool, events: pi.events });
 	}
 	pi.on("session_shutdown", async () => {
 		generation++;
