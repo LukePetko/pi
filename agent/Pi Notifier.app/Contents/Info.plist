@@ -10,4 +10,5 @@
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>LSBackgroundOnly</key><string>1</string>
+<key>NSUserNotificationAlertStyle</key><string>alert</string>
 </dict></plist>

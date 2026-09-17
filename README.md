@@ -331,7 +331,7 @@ Test:
 /notify-test
 ```
 
-If notifications do not appear, enable notifications for your terminal app / terminal-notifier in macOS System Settings.
+The notifier app requests **Alerts** by default so notifications stay onscreen until dismissed. macOS controls the final behavior: in **System Settings → Notifications → Pi Notifier**, enable notifications and select **Alerts** (or **Persistent**, depending on macOS version). Existing notification preferences override the app default. The `osascript` fallback uses its own sender's notification preferences.
 
 ## Git hygiene
 

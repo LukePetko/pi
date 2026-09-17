@@ -174,6 +174,7 @@ function ensureNotifierApp(): void {
 <key>CFBundleVersion</key><string>1</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>LSBackgroundOnly</key><string>1</string>
+<key>NSUserNotificationAlertStyle</key><string>alert</string>
 </dict></plist>\n`,
 	);
 	writeFileSync(APP_EXECUTABLE, "#!/bin/sh\nexit 0\n");
@@ -206,8 +207,6 @@ function notify(title: string, message: string, icon?: string): void {
 		message,
 		"-sound",
 		"Glass",
-		"-timeout",
-		"12",
 	];
 	if (existsSync(APP_PATH)) args.push("-sender", BUNDLE_ID);
 	if (icon) args.push("-contentImage", icon);
