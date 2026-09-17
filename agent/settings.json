@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.84.4",
+  "lastChangelogVersion": "0.85.1",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-astra",
   "defaultThinkingLevel": "high",
@@ -15,8 +15,7 @@
     {
       "source": "npm:@juicesharp/rpiv-todo",
       "extensions": []
-    },
-    "npm:@companion-ai/feynman"
+    }
   ],
   "hideThinkingBlock": false,
   "tuiMode": "fullscreen"
