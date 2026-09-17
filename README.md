@@ -16,7 +16,8 @@ Personal Pi agent configuration with a custom terminal UI, Neovim/tmux bridge, c
 - `ffmpeg` for WebP landing image preprocessing
 - `lazygit` for `/lazygit`
 - `terminal-notifier` for macOS task-complete notifications with custom icons
-- `osascript` fallback for macOS notifications, included with macOS
+- AeroSpace for exact terminal-window focus detection
+- Xcode Command Line Tools for native permission notification actions
 
 Recommended installs:
 
@@ -311,6 +312,8 @@ Ctrl+\   switch between Pi and Neovim tmux panes
 
 Click **Show** (or the notification body) to focus the originating Pi process using Hub's tmux/AeroSpace navigation. The process must still be running; stale notifications never reopen a session or target a recycled process ID. Existing notifications sent before this feature do not gain click actions.
 
+Both completion and permission alerts are skipped when their Pi's tmux pane and AeroSpace window are already focused. Returning to that exact pane/window dismisses all of that Pi's tracked alerts within about a second—without approving or rejecting any permission. Other sessions' alerts stay untouched. Focus checks run only while alerts are tracked, and ambiguous mappings, missing tools, or non-tmux sessions keep notifications visible. Shutdown/reload clears tracked alerts too; older, ungrouped completion alerts from before this update need manual dismissal.
+
 Permission requests use the native **Pi Permissions** helper: **Accept once**, **Reject**, or **Show** (possibly under macOS's **Options** menu). Accept/Reject require unlocking the Mac; Show only focuses Pi. The alert clears on a local/Hub/native decision, cancellation, or shutdown. Allow **Pi Permissions** notifications separately and select **Alerts/Persistent**. The helper compiles locally using Xcode Command Line Tools; if unavailable, a removable Show-only terminal-notifier alert is used instead. Preview with `/confirm-dialog test`; see [permission notifications](docs/hub-permissions.md). No permission path uses the non-removable AppleScript fallback.
 
 Completion notification format:
@@ -327,7 +330,7 @@ Frieren finished the quest
 .pi · 42s
 ```
 
-If custom app setup fails, the standard `terminal-notifier` sender still supports click-to-focus but uses its own notification preferences. If notification delivery fails, it falls back to `osascript` without a custom icon or click-to-focus.
+If custom app setup fails, the standard `terminal-notifier` sender still supports click-to-focus but uses its own notification preferences. Every alert has an individually removable ID. The non-removable AppleScript fallback is intentionally disabled, including for completion alerts.
 
 Test:
 
@@ -335,7 +338,9 @@ Test:
 /notify-test
 ```
 
-The notifier app requests **Alerts** by default so notifications stay onscreen until dismissed. macOS controls the final behavior: in **System Settings → Notifications → Pi Notifier**, enable notifications and select **Alerts** (or **Persistent**, depending on macOS version). Existing notification preferences override the app default. The `osascript` fallback uses its own sender's notification preferences.
+`/notify-test` follows the same focus policy: it intentionally shows nothing while this Pi is focused. To test dismissal, start a task and switch to another pane/window before completion, then return after its alert appears. You can also send the test command to the Pi pane from another pane without focusing it.
+
+The notifier apps request **Alerts** by default. In **System Settings → Notifications**, enable **Pi Notifier** and **Pi Permissions** and select **Alerts/Persistent**. Existing macOS preferences override the apps' defaults.
 
 ## Git hygiene
 

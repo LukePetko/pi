@@ -19,6 +19,8 @@ Allow notifications for **Pi Permissions** and select **Alerts/Persistent** in m
 
 The native alert clears when you approve, reject, cancel, or resolve the request from Hub, and on session shutdown/reload. Both pending and delivered notification IDs are removed and checked; late delivery is cleaned up too. Its private callback record is revoked before removal. If the native helper is unavailable or denied notification access, the existing removable **Show**-only terminal-notifier alert is used. Its cleanup closes stdin explicitly: terminal-notifier otherwise waits indefinitely for EOF. Permission failures never use the non-removable AppleScript fallback.
 
+A focus watcher skips alerts when this Pi's exact tmux pane and native window are already focused, and removes tracked permission/completion alerts when you return there. **Focus acknowledges only the notification: the permission remains pending in Pi and Hub.** Its notification callback record is revoked, but explicit terminal/Hub approval still works. Acknowledged alerts do not reappear merely because you switch away again. The watcher is session-scoped, polls only while it has tracked alerts, and preserves alerts when focus cannot be established unambiguously.
+
 This integration covers this repository's `confirm-dialog` permission gate, not unrelated question dialogs from other extensions. Headless requests retain the existing fail-closed behavior.
 
 ## Safety and lifetime
@@ -50,7 +52,13 @@ node --test agent/tests/native-permission-action.test.ts agent/tests/native-perm
 Opt-in macOS test (briefly posts harmless test alerts; allow Pi Permissions first):
 
 ```sh
-PI_NATIVE_NOTIFICATION_TEST=1 node --test agent/tests/native-permission-app.test.ts
+PI_NATIVE_NOTIFICATION_TEST=1 node --test agent/tests/native-permission-app.test.ts agent/tests/focus-notifications-native.test.ts
 ```
 
-For manual button verification, run `/confirm-dialog test` once per action. Accept once and Reject should close the waiting dialog; Show should focus it without deciding. Approving from Hub or the terminal should remove the alert as well.
+Focus and pending-permission regression tests:
+
+```sh
+node --test agent/tests/pi-notification-focus.test.ts agent/tests/focus-notifications.test.ts agent/tests/focus-permission-lifecycle.test.ts
+```
+
+For manual notification-button verification, send `/confirm-dialog test` to the Pi pane from another pane without focusing it. Running it directly in the focused Pi intentionally suppresses the notification. Accept once and Reject should close the waiting dialog; Show or manually focusing Pi should remove the alert **without** deciding. Approving from Hub or the terminal should remove the alert as well.

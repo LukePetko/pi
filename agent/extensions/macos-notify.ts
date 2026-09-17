@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
@@ -18,6 +19,8 @@ import {
 } from "./lib/macos-notify-click.ts";
 import { watchPermissionNotifications, type ShowNotice } from "./lib/permission-notifications.ts";
 import { createNativePermissionSender } from "./lib/native-permission-notifications.ts";
+import { createFocusNotifications } from "./lib/focus-notifications.ts";
+import { isPiSessionFocused } from "./lib/pi-notification-focus.ts";
 
 const HOME = process.env.HOME ?? ".";
 const AGENT_DIR = join(HOME, ".pi", "agent");
@@ -206,8 +209,8 @@ let clickableNotifier: string | undefined;
 function notify(
 	title: string,
 	message: string,
-	icon?: string,
-	options: { group?: string; onDelivered?: () => void } = {},
+	icon: string | undefined,
+	options: { group: string; onDelivered?: () => void },
 ): () => void {
 	const args = ["-title", title, "-message", message, "-sound", "Glass"];
 	try {
@@ -234,26 +237,16 @@ function notify(
 		// Do not lose the notification if process identity cannot be captured.
 	}
 	if (icon) args.push("-contentImage", icon);
-	if (options.group) args.push("-group", options.group);
+	args.push("-group", options.group);
 	const executable = clickableNotifier ?? "terminal-notifier";
 	const sender = clickableNotifier ? ["-sender", BUNDLE_ID] : [];
 	execFile(executable, args, (error) => {
 		options.onDelivered?.();
-		if (!error) return;
-		if (options.group) {
-			// AppleScript alerts cannot be withdrawn and would leave stale permission prompts.
-			console.error("Pi permission notification failed:", error.message);
-			return;
-		}
-		const script = [
-			`tell application "System Events"`,
-			`display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)} sound name "Glass"`,
-			`end tell`,
-		].join("\n");
-		execFile("osascript", ["-e", script], () => {});
+		// AppleScript alerts cannot be withdrawn when their Pi session gains focus.
+		if (error) console.error("Pi macOS notification failed:", error.message);
 	});
 	return () => {
-		if (options.group) execFile(executable, ["-remove", options.group, ...sender], () => {}).stdin?.end();
+		execFile(executable, ["-remove", options.group, ...sender], () => {}).stdin?.end();
 	};
 }
 
@@ -263,18 +256,27 @@ export const legacyPermissionSender: ShowNotice = (notice, group, onDelivered) =
 export default function (
 	pi: ExtensionAPI,
 	permissionSender: ShowNotice = createNativePermissionSender({ fallback: legacyPermissionSender }),
+	isFocused: () => Promise<boolean> = () => isPiSessionFocused(process.pid),
 ) {
 	let startedAt = 0;
 	let lastCtx: ExtensionContext | undefined;
 	let stopPermissions: (() => void) | undefined;
+	let notifications = createFocusNotifications({ isFocused });
 
 	pi.on("session_start", () => {
 		stopPermissions?.();
-		stopPermissions = watchPermissionNotifications(pi.events, permissionSender);
+		notifications.dispose();
+		notifications = createFocusNotifications({ isFocused });
+		stopPermissions = watchPermissionNotifications(pi.events, (notice, group, onDelivered) =>
+			notifications.show(delivered => permissionSender(notice, group, () => {
+				delivered();
+				onDelivered();
+			})));
 	});
 	pi.on("session_shutdown", () => {
 		stopPermissions?.();
 		stopPermissions = undefined;
+		notifications.dispose();
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
@@ -282,29 +284,27 @@ export default function (
 		lastCtx = ctx;
 	});
 
+	function completion(message: string): void {
+		const group = `pi-completion:${process.pid}:${randomUUID()}`;
+		notifications.show(onDelivered => {
+			const landing = landingIcon();
+			return notify(titleForSource(landing?.source), message, landing?.icon, { group, onDelivered });
+		});
+	}
+
 	function done(ctx = lastCtx): void {
 		const elapsed = startedAt ? formatDuration(Date.now() - startedAt) : "done";
-		const landing = landingIcon();
-		notify(
-			titleForSource(landing?.source),
-			`${projectName(ctx)} · ${elapsed}`,
-			landing?.icon,
-		);
+		completion(`${projectName(ctx)} · ${elapsed}`);
 		startedAt = 0;
 	}
 
 	pi.on("agent_end", async (_event, ctx) => done(ctx));
 
 	pi.registerCommand("notify-test", {
-		description: "Send a test macOS notification",
+		description: "Test macOS notifications (suppressed while this Pi is focused)",
 		handler: async (_args, ctx) => {
-			const landing = landingIcon();
-			notify(
-				titleForSource(landing?.source),
-				`${projectName(ctx)} · test`,
-				landing?.icon,
-			);
-			ctx.ui.notify("Sent macOS notification test", "info");
+			completion(`${projectName(ctx)} · test`);
+			ctx.ui.notify("Notification queued; skipped if this Pi is already focused", "info");
 		},
 	});
 }
