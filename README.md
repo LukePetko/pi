@@ -307,7 +307,9 @@ Ctrl+\   switch between Pi and Neovim tmux panes
 
 ## Notifications
 
-`macos-notify.ts` uses `terminal-notifier` and creates a small local `Pi Notifier.app` with a custom π app icon. Notifications also use a random image from `agent/landing/` as the content image.
+`macos-notify.ts` uses `terminal-notifier` and a local `Pi Notifier.app` with a custom π app icon. Its clickable runtime bundle is generated under `agent/cache/` from the installed notifier; binaries are not committed. Notifications also use a random image from `agent/landing/` as the content image.
+
+Click **Show** (or the notification body) to focus the originating Pi process using Hub's tmux/AeroSpace navigation. The process must still be running; stale notifications never reopen a session or target a recycled process ID. Existing notifications sent before this feature do not gain click actions.
 
 Notification format:
 
@@ -323,7 +325,7 @@ Frieren finished the quest
 .pi · 42s
 ```
 
-If `terminal-notifier` fails, it falls back to `osascript` without a custom icon.
+If custom app setup fails, the standard `terminal-notifier` sender still supports click-to-focus but uses its own notification preferences. If notification delivery fails, it falls back to `osascript` without a custom icon or click-to-focus.
 
 Test:
 

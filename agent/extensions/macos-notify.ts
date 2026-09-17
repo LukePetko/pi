@@ -11,6 +11,11 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import {
+	ensureClickableNotifierApp,
+	findNotifierApp,
+	notificationFocusCommand,
+} from "./lib/macos-notify-click.ts";
 
 const HOME = process.env.HOME ?? ".";
 const AGENT_DIR = join(HOME, ".pi", "agent");
@@ -194,23 +199,35 @@ function projectName(ctx?: ExtensionContext): string {
 	return ctx?.cwd ? basename(ctx.cwd) || ctx.cwd : "pi";
 }
 
+let clickableNotifier: string | undefined;
+
 function notify(title: string, message: string, icon?: string): void {
+	const args = ["-title", title, "-message", message, "-sound", "Glass"];
 	try {
-		ensureNotifierApp();
+		if (!clickableNotifier) {
+			ensureNotifierApp();
+			clickableNotifier = ensureClickableNotifierApp({
+				sourceApp: findNotifierApp(),
+				app: join(CACHE_DIR, "Pi Notifier.app"),
+				icon: APP_ICON,
+				bundleId: BUNDLE_ID,
+			});
+		}
+		// The sender now owns a real notification handler, rather than an exit-only stub.
+		args.push("-sender", BUNDLE_ID);
 	} catch {
-		// Fall back to terminal-notifier's default sender if app generation fails.
+		// Default terminal-notifier can still handle clicks if custom app setup fails.
 	}
-	const args = [
-		"-title",
-		title,
-		"-message",
-		message,
-		"-sound",
-		"Glass",
-	];
-	if (existsSync(APP_PATH)) args.push("-sender", BUNDLE_ID);
+	try {
+		const startedAt = execFileSync("/bin/ps", ["-p", String(process.pid), "-o", "lstart="], {
+			encoding: "utf8",
+		}).trim();
+		args.push("-execute", notificationFocusCommand(process.pid, startedAt));
+	} catch {
+		// Do not lose the notification if process identity cannot be captured.
+	}
 	if (icon) args.push("-contentImage", icon);
-	execFile("terminal-notifier", args, (error) => {
+	execFile(clickableNotifier ?? "terminal-notifier", args, (error) => {
 		if (!error) return;
 		const script = [
 			`tell application "System Events"`,
