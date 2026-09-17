@@ -19,8 +19,9 @@ async function harness(t, customAppFails = false) {
 		return command === "/bin/ps" ? "process birth stamp" : "";
 	});
 	t.mock.method(childProcess, "execFile", (command, args, callback) => {
-		calls.push({ command, args, callback });
-		return {};
+		const call = { command, args, callback, stdinClosed: false };
+		calls.push(call);
+		return { stdin: { end() { call.stdinClosed = true; } } };
 	});
 	t.mock.method(console, "error", () => {});
 	syncBuiltinESMExports();
@@ -59,6 +60,7 @@ test("permission alerts use the persistent Pi sender and click action, then with
 	const group = value("-group");
 	h.bus.emit(PERMISSION_RESOLVED, { id: "permission-a" });
 	assert.equal(h.calls[1].command, sent.command);
+	assert.equal(h.calls[1].stdinClosed, true, "terminal-notifier -remove waits for stdin EOF");
 	assert.deepEqual(h.calls[1].args, ["-remove", group, "-sender", "works.earendil.pi-notifier.lukas"]);
 	sent.callback(null);
 	assert.deepEqual(h.calls[2].args, h.calls[1].args, "late delivery must be removed too");

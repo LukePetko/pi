@@ -252,7 +252,7 @@ function notify(
 		execFile("osascript", ["-e", script], () => {});
 	});
 	return () => {
-		if (options.group) execFile(executable, ["-remove", options.group, ...sender], () => {});
+		if (options.group) execFile(executable, ["-remove", options.group, ...sender], () => {}).stdin?.end();
 	};
 }
 
