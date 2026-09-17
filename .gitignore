@@ -8,6 +8,7 @@ agent/mcp-oauth/
 agent/sessions/
 agent/cache/
 agent/intercom/
+agent/missions/
 agent/mcp-cache.json
 agent/mcp-onboarding.json
 agent/ctx-mode.json
