@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -21,6 +22,7 @@ import {
 } from "./lib/confirm-dialog.ts";
 import { gitRoot } from "./lib/nvim.ts";
 import { createPermissionBroker } from "./lib/hub-permissions.ts";
+import { PERMISSION_REQUESTED, PERMISSION_RESOLVED } from "./lib/permission-notifications.ts";
 import { loadConfig as loadIntercomConfig } from "../npm/node_modules/pi-intercom/config.ts";
 
 const CONFIG_PATH = join(
@@ -256,7 +258,13 @@ export default function confirmDialog(pi: ExtensionAPI, brokerFactory = createPe
 		const owner = await broker.catch(() => undefined);
 		if (generation !== currentGeneration) return "reject";
 		if (!owner) ctx.ui.notify("Hub permission bridge unavailable; use this terminal.", "warning");
-		return askPermission(ctx, request, owner, tool);
+		const id = randomUUID();
+		pi.events.emit(PERMISSION_REQUESTED, { id, cwd: ctx.cwd, title: request.title });
+		try {
+			return await askPermission(ctx, request, owner, tool);
+		} finally {
+			pi.events.emit(PERMISSION_RESOLVED, { id });
+		}
 	}
 	pi.on("session_shutdown", async () => {
 		generation++;

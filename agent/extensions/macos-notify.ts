@@ -16,6 +16,7 @@ import {
 	findNotifierApp,
 	notificationFocusCommand,
 } from "./lib/macos-notify-click.ts";
+import { watchPermissionNotifications } from "./lib/permission-notifications.ts";
 
 const HOME = process.env.HOME ?? ".";
 const AGENT_DIR = join(HOME, ".pi", "agent");
@@ -195,13 +196,18 @@ function formatDuration(ms: number): string {
 	return rem ? `${minutes}m ${rem}s` : `${minutes}m`;
 }
 
-function projectName(ctx?: ExtensionContext): string {
+function projectName(ctx?: Pick<ExtensionContext, "cwd">): string {
 	return ctx?.cwd ? basename(ctx.cwd) || ctx.cwd : "pi";
 }
 
 let clickableNotifier: string | undefined;
 
-function notify(title: string, message: string, icon?: string): void {
+function notify(
+	title: string,
+	message: string,
+	icon?: string,
+	options: { group?: string; onDelivered?: () => void } = {},
+): () => void {
 	const args = ["-title", title, "-message", message, "-sound", "Glass"];
 	try {
 		if (!clickableNotifier) {
@@ -227,8 +233,17 @@ function notify(title: string, message: string, icon?: string): void {
 		// Do not lose the notification if process identity cannot be captured.
 	}
 	if (icon) args.push("-contentImage", icon);
-	execFile(clickableNotifier ?? "terminal-notifier", args, (error) => {
+	if (options.group) args.push("-group", options.group);
+	const executable = clickableNotifier ?? "terminal-notifier";
+	const sender = clickableNotifier ? ["-sender", BUNDLE_ID] : [];
+	execFile(executable, args, (error) => {
+		options.onDelivered?.();
 		if (!error) return;
+		if (options.group) {
+			// AppleScript alerts cannot be withdrawn and would leave stale permission prompts.
+			console.error("Pi permission notification failed:", error.message);
+			return;
+		}
 		const script = [
 			`tell application "System Events"`,
 			`display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)} sound name "Glass"`,
@@ -236,11 +251,25 @@ function notify(title: string, message: string, icon?: string): void {
 		].join("\n");
 		execFile("osascript", ["-e", script], () => {});
 	});
+	return () => {
+		if (options.group) execFile(executable, ["-remove", options.group, ...sender], () => {});
+	};
 }
 
 export default function (pi: ExtensionAPI) {
 	let startedAt = 0;
 	let lastCtx: ExtensionContext | undefined;
+	let stopPermissions: (() => void) | undefined;
+
+	pi.on("session_start", () => {
+		stopPermissions?.();
+		stopPermissions = watchPermissionNotifications(pi.events, (notice, group, onDelivered) =>
+			notify("Permission needed", `${projectName(notice)} · ${notice.title}`, undefined, { group, onDelivered }));
+	});
+	pi.on("session_shutdown", () => {
+		stopPermissions?.();
+		stopPermissions = undefined;
+	});
 
 	pi.on("agent_start", async (_event, ctx) => {
 		startedAt = Date.now();

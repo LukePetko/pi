@@ -26,7 +26,11 @@ export default async function (pi) {
 	const directory = permissionDirectory();
 	const session = { id: "permission-fixture", name: "Preview session", pid: process.pid, startedAt: Date.now() - 1000, lastActivity: Date.now(), cwd: "/project", model: "test", status: "idle" };
 	const permissionHandlers = new Map(), permissionCommands = new Map();
-	confirmDialog({ on: (name, handler) => permissionHandlers.set(name, handler), registerCommand: (name, command) => permissionCommands.set(name, command) }, () => createPermissionBroker(directory));
+	const notificationEvents = [];
+	for (const name of ["pi:permission-requested", "pi:permission-resolved"]) {
+		pi.events.on(name, (data) => notificationEvents.push({ name, data }));
+	}
+	confirmDialog({ events: pi.events, on: (name, handler) => permissionHandlers.set(name, handler), registerCommand: (name, command) => permissionCommands.set(name, command) }, () => createPermissionBroker(directory));
 	const hubHandlers = new Map(), hubCommands = new Map();
 	piHub({
 		on: (name, handler) => hubHandlers.set(name, handler),
@@ -59,6 +63,11 @@ export default async function (pi) {
 		assert.equal(full.description, '$ echo "Hello from Pi"');
 		assert.equal(JSON.parse(full.input).command, 'echo "Hello from Pi"');
 		assert.match(full.title, /nothing executes/);
+		assert.equal(notificationEvents.length, 1);
+		assert.equal(notificationEvents[0].name, "pi:permission-requested");
+		assert.deepEqual(Object.keys(notificationEvents[0].data).sort(), ["cwd", "id", "title"], "notification payload must omit command/input details");
+		assert.equal(notificationEvents[0].data.cwd, session.cwd);
+		assert.equal(notificationEvents[0].data.title, full.title);
 		await hubHandlers.get("session_start")({}, ctx);
 		const viewingHub = hubCommands.get("hub").handler("", ctx);
 		await waitFor(() => hub !== undefined);
@@ -67,6 +76,7 @@ export default async function (pi) {
 		assert.ok(colors.some(({ color, text }) => color === "warning" && text === "Permission needed"), "label must be yellow, not just its dot");
 		await decidePermission(session, request.id, "once", directory);
 		await preview;
+		assert.deepEqual(notificationEvents[1], { name: "pi:permission-resolved", data: { id: notificationEvents[0].data.id } });
 		assert.equal(doneCount, 1, "browser approval closes the real local dialog");
 		dialog.handleInput("\x1b");
 		assert.equal(doneCount, 1, "stale local input cannot resolve a second time");
@@ -82,14 +92,23 @@ export default async function (pi) {
 		await rejected;
 		await waitFor(async () => (await readPermissionSummaries(session, directory)).length === 0);
 		assert.ok(notices.includes("Preview result: reject"));
+		assert.equal(notificationEvents.length, 4);
+		assert.notEqual(notificationEvents[2].data.id, notificationEvents[0].data.id);
+		assert.deepEqual(notificationEvents[3], { name: "pi:permission-resolved", data: { id: notificationEvents[2].data.id } });
+		await assert.rejects(permissionCommands.get("confirm-dialog").handler("test", { ...ctx, ui: { ...ctx.ui, custom: async () => { throw new Error("UI cancelled"); } } }), /UI cancelled/);
+		assert.equal(notificationEvents.length, 6);
+		assert.deepEqual(notificationEvents[5], { name: "pi:permission-resolved", data: { id: notificationEvents[4].data.id } });
+		await permissionCommands.get("confirm-dialog").handler("test", { ...ctx, hasUI: false });
+		assert.equal(notificationEvents.length, 6, "headless requests must not create alerts");
 		const delayedHandlers = new Map(), delayedCommands = new Map();
 		let release;
-		confirmDialog({ on: (name, handler) => delayedHandlers.set(name, handler), registerCommand: (name, command) => delayedCommands.set(name, command) }, () => new Promise((resolve) => { release = resolve; }));
+		confirmDialog({ events: pi.events, on: (name, handler) => delayedHandlers.set(name, handler), registerCommand: (name, command) => delayedCommands.set(name, command) }, () => new Promise((resolve) => { release = resolve; }));
 		const waiting = delayedCommands.get("confirm-dialog").handler("test", ctx);
 		const shutdown = delayedHandlers.get("session_shutdown")({}, ctx);
 		release(await createPermissionBroker(directory));
 		await Promise.all([waiting, shutdown]);
 		assert.equal(doneCount, 2, "shutdown during broker startup must not open a late dialog");
+		assert.equal(notificationEvents.length, 6, "shutdown during startup must not create a late alert");
 	} finally { closeHub?.(); await permissionHandlers.get("session_shutdown")({}, ctx); }
 	pi.registerCommand("permission-integration-passed", { handler: async () => {} });
 }

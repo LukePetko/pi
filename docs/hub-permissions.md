@@ -3,6 +3,7 @@
 `confirm-dialog` requests are now shared with the terminal Hub and Hub web:
 
 - The terminal `/hub` shows **Permission needed** in yellow and sorts waiting sessions first.
+- macOS shows a separate **Permission needed** alert using Pi Notifier's persistent **Alerts/Persistent** style. **Show** focuses the requesting Pi via Hub's navigation; it never grants permission. Only the project name and permission title appear, not command arguments.
 - Hub web shows the same yellow status, the complete request description, working directory, and full tool input. Long text scrolls rather than being silently truncated.
 - **Allow once** or **Reject** resolves the original waiting request and dismisses the terminal dialog. A terminal decision also removes the web request.
 - **Allow always** remains terminal-only, with its existing second confirmation. Hard-deny rules never create an approvable request.
@@ -13,6 +14,8 @@
 2. Restart the existing dashboard: `/hub-web stop`, then `/hub-web`.
 3. Run `/confirm-dialog test` in a Pi session. It previews `echo "Hello from Pi"`; **nothing executes**, regardless of your choice.
 4. Open `/hub` from another session or view Hub web. The preview appears there until resolved.
+
+The native alert clears when you approve, reject, cancel, or resolve the request from Hub, and on session shutdown/reload. A late-arriving notification is removed too. Completion notifications remain independent. Native alerts require `macos-notify.ts` and `terminal-notifier`; permission failures do not use the non-removable AppleScript fallback.
 
 This integration covers this repository's `confirm-dialog` permission gate, not unrelated question dialogs from other extensions. Headless requests retain the existing fail-closed behavior.
 
@@ -29,7 +32,7 @@ The dashboard remains loopback-only. Approval endpoints require its bearer token
 ## Checks
 
 ```sh
-node --test agent/tests/hub-permissions.test.ts agent/tests/hub-permissions-browser.test.ts agent/tests/hub-permissions-load.test.ts
+node --test agent/tests/hub-permissions.test.ts agent/tests/hub-permissions-browser.test.ts agent/tests/hub-permissions-load.test.ts agent/tests/permission-notifications.test.ts agent/tests/macos-notify-permissions.test.ts
 ```
 
 These cover real preview-to-Hub wiring, yellow terminal rendering, full browser details, native/browser synchronization, one-time decisions, forbidden persistent approvals, cross-origin/auth failures, large requests, and broker replacement cleanup.
