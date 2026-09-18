@@ -12,6 +12,12 @@ our existing macOS AeroSpace/tmux navigation; detached/headless sessions may not
 have a focusable window. It does not send messages, run agent turns, reload Pi,
 read transcripts, or expose arbitrary command execution.
 
+Cards stay in session-start order, oldest first, with session ID breaking ties.
+Thinking, tool activity, permission requests, renames, filtering, and snapshot
+arrival order do not move existing sessions around. Newer sessions appear at the
+end; removing a session preserves the others' relative order. Reloading the page
+uses the same ordering. This changes only Hub web, not the terminal Hub's priority sort.
+
 ## Lifecycle
 
 One detached Node process serves the dashboard for each agent directory and
@@ -66,14 +72,18 @@ loader already installed with Intercom.
 ## Checks
 
 ```sh
-node --experimental-strip-types --test agent/tests/pi-hub-web-*.test.js
+node --experimental-strip-types --test agent/tests/pi-hub-web-*.test.ts
 ```
 
 The integration test uses a short `/tmp` directory to stay below macOS Unix-socket
 path limits, starts an isolated broker, and checks concurrent startup, presence,
 broker reconnection, stop, and stale-endpoint recovery.
 
-The browser test uses a separate headless Chrome profile, never your normal one.
+Browser regression tests cover stable ordering through activity/permission changes,
+renames, filtering, additions/removals and page reload, as well as preserved focus
+and todo expansion state.
+
+The browser tests use a separate headless Chrome profile, never your normal one.
 On macOS it discovers the standard Google Chrome installation. Elsewhere set
 `PI_HUB_CHROME` to a Chrome/Chromium executable; the test skips if none exists.
 Set `PI_HUB_SCREENSHOT=/tmp/pi-hub-web.png` to capture its fixture dashboard.

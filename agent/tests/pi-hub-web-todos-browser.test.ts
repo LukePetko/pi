@@ -65,8 +65,9 @@ test("Hub todo panels are safe, keyboard/click collapsible, live, independent, a
 	assert.equal(await browser.evaluate('document.querySelector(".todo-current").textContent'), " - Review changes");
 	state = { ...state, sessions: state.sessions.map((session) => session.id === "Beta" ? { ...session, status: "thinking" } : session) };
 	for (const listener of listeners) listener();
-	await browser.waitFor('document.querySelector("h2").textContent === "Beta"');
-	assert.equal(await browser.evaluate('document.querySelector(".todos[open]").closest(".card").querySelector("h2").textContent'), "Alpha", "sorting does not transfer collapse state between sessions");
+	await browser.waitFor('document.querySelector(".card.busy h2")?.textContent === "Beta"');
+	assert.equal(await browser.evaluate('document.querySelector("h2").textContent'), "Alpha", "thinking does not move a card ahead of an older session");
+	assert.equal(await browser.evaluate('document.querySelector(".todos[open]").closest(".card").querySelector("h2").textContent'), "Alpha", "status updates preserve per-session collapse state");
 	await browser.evaluate('document.querySelector("#search").value = "Alpha"; document.querySelector("#search").dispatchEvent(new Event("input"))');
 	assert.equal(await browser.evaluate('document.querySelectorAll(".card:not([hidden])").length'), 1);
 	assert.equal(await browser.evaluate('document.querySelector(".card:not([hidden]) .todos").open'), true);

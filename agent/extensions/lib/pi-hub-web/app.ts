@@ -92,8 +92,9 @@ function emptyMessage(sessionCount: number): string {
 
 function render() {
 	const query = search.value.toLowerCase();
-	const sessions = [...snapshot.sessions].sort((a, b) => Number(Boolean(b.permissions?.length)) - Number(Boolean(a.permissions?.length)) ||
-			Number(busy(b)) - Number(busy(a)) || (a.name || a.id).localeCompare(b.name || b.id));
+	// Lifetime identity, not activity or display names, determines a card's position.
+	const sessions = [...snapshot.sessions].sort((a, b) =>
+		a.startedAt - b.startedAt || a.id.localeCompare(b.id));
 	const visible = sessions.filter((s) => [s.name, s.cwd, s.model, s.status].join(" ").toLowerCase().includes(query));
 	$("#count").textContent = String(sessions.length);
 	$("#active-count").textContent = `${sessions.filter(busy).length} working`;
