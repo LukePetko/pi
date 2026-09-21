@@ -1,4 +1,4 @@
-# Local web Hub (v0)
+# Local web Hub (v2, Phase 1)
 
 Run `/reload` once to discover the new extension, then:
 
@@ -12,11 +12,16 @@ our existing macOS AeroSpace/tmux navigation; detached/headless sessions may not
 have a focusable window. It does not send messages, run agent turns, reload Pi,
 read transcripts, or expose arbitrary command execution.
 
-Cards stay in session-start order, oldest first, with session ID breaking ties.
-Thinking, tool activity, permission requests, renames, filtering, and snapshot
-arrival order do not move existing sessions around. Newer sessions appear at the
-end; removing a session preserves the others' relative order. Reloading the page
-uses the same ordering. This changes only Hub web, not the terminal Hub's priority sort.
+The board groups sessions into **Needs you**, **Ready for review**, **Working**,
+and **Parked**. Ordinary changes are frozen until the default 25-minute check-in,
+a manual refresh, or a card action; **Live updates** opts into immediate updates.
+A newly identified high-risk gate breaks through for that session only. **Accept**
+acknowledges a returned result and parks it, with acknowledgements saved across Hub
+restarts. Status/question detection is approximate in Phase 1 and uses existing
+presence/todos, not new producer signals. The terminal Hub is unchanged.
+
+See [Phase 1 scope, adaptations and acceptance evidence](hub-web-v2-phase1.md)
+and the [v2 specification](hub-web-v2-spec.md).
 
 ## Lifecycle
 
@@ -41,8 +46,8 @@ update, reload Pi and run `/hub-web stop`, then `/hub-web` to start the new code
 ## Local security boundary
 
 - Loopback binding, exact Host/Origin checks, no CORS, and a restrictive CSP.
-- Every API requires a random bearer token. Focus and stop also require the exact
-  Origin. Focus accepts a session ID and resolves its PID from a fresh broker list;
+- Every API requires a random bearer token. All POST endpoints require the exact
+  Origin, including acknowledgements and permission decisions. Focus accepts a session ID and resolves its PID from a fresh broker list;
   the browser cannot supply a PID or command.
 - The browser receives the token in a URL fragment (not an HTTP URL), saves it in
   tab-local session storage, and removes the fragment from the address bar.
@@ -63,7 +68,9 @@ LAN binding, tunnel, or port forward. No remote-access support is included.
 - `agent/extensions/lib/pi-hub-web-launcher.ts`: scoped discovery, locking, startup, stop.
 - `agent/extensions/lib/pi-hub-web-main.ts`: standalone lifecycle and focus worker.
 - `agent/extensions/lib/pi-hub-web-source.ts`: Intercom snapshots and reconnects.
-- `agent/extensions/lib/pi-hub-web-server.ts`: authenticated HTTP/SSE adapter.
+- `agent/extensions/lib/pi-hub-web-server.ts`: authenticated HTTP/SSE adapter and acknowledgement API.
+- `agent/extensions/lib/hub-attention.ts`: pure classification and atomic acknowledgement persistence.
+- `agent/extensions/lib/pi-hub-web/board.ts`: ranking, check-in freeze and high-risk breakthrough.
 - `agent/extensions/lib/pi-hub-web/`: bundled HTML, CSS, and browser JavaScript.
 
 No new dependencies or frontend build step. The runtime uses Node and the `tsx`
@@ -79,9 +86,9 @@ The integration test uses a short `/tmp` directory to stay below macOS Unix-sock
 path limits, starts an isolated broker, and checks concurrent startup, presence,
 broker reconnection, stop, and stale-endpoint recovery.
 
-Browser regression tests cover stable ordering through activity/permission changes,
-renames, filtering, additions/removals and page reload, as well as preserved focus
-and todo expansion state.
+Browser regression tests cover frozen ordering, high-risk breakthrough, card actions,
+Live/check-in controls, acknowledgements, archive/filter behavior, keyed DOM/todo
+state, full permission details and mobile layout.
 
 The browser tests use a separate headless Chrome profile, never your normal one.
 On macOS it discovers the standard Google Chrome installation. Elsewhere set

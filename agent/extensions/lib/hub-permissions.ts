@@ -1,8 +1,41 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { join } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 import { hubStateDir } from "./pi-hub-web-launcher.ts";
+
+export type PermissionRisk = "low" | "high";
+
+/** Phase 1 display-only inference from existing inspection data. Never grants approval. */
+export function describePermission(request: PermissionRequest): { risk: PermissionRisk; tool: string; summary: string } {
+	const tool = request.toolName?.split(".").at(-1)?.toLowerCase() || "unknown";
+	let input: { path?: unknown; command?: unknown } = {};
+	let unknown = !request.toolName || request.input === undefined;
+	if (request.input !== undefined) {
+		try {
+			const parsed = JSON.parse(request.input);
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) unknown = true;
+			else input = parsed;
+		} catch { unknown = true; }
+	}
+	unknown ||= tool === "bash" && typeof input.command !== "string";
+	unknown ||= (tool === "write" || tool === "edit") && typeof input.path !== "string";
+	const command = typeof input.command === "string" ? input.command : "";
+	const path = typeof input.path === "string" ? resolve(request.cwd, input.path.startsWith("~/") ? join(homedir(), input.path.slice(2)) : input.path) : undefined;
+	const outside = path ? relative(resolve(request.cwd), path) : "";
+	const protectedPath = path && (basename(path).startsWith(".env") || [".ssh", ".pi"].some(name => {
+		const part = relative(join(homedir(), name), path);
+		return part === "" || (!part.startsWith(`..${sep}`) && part !== ".." && !isAbsolute(part));
+	}));
+	const dangerousShell = tool === "bash" && (command.length > 8192 || /\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b|\bgit\b[^;\n]*\bpush\b|\bgit\b[^;\n]*\breset\b[^;\n]*--hard\b|\b(sudo|curl|wget|docker|ssh|scp)\b|\bnpm\s+publish\b|[\/]\.(ssh|pi)(?:[\/]|\b)|\.env[^\s]*/i.test(command));
+	const escapesCwd = outside === ".." || outside.startsWith(`..${sep}`) || isAbsolute(outside);
+	return {
+		risk: unknown || escapesCwd || dangerousShell || ((tool === "write" || tool === "edit") && protectedPath) ? "high" : "low",
+		tool,
+		summary: (command || (typeof input.path === "string" ? input.path : request.description)).replace(/\s+/g, " ").trim().slice(0, 240),
+	};
+}
 
 export type PermissionDecision = "once" | "reject";
 export type LocalPermissionDecision = PermissionDecision | "always";

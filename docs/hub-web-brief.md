@@ -1,6 +1,6 @@
 # Pi Hub web: technical brief
 
-Based on current working-tree source and the installed Intercom package.
+Historical v1 baseline, based on the working tree and installed Intercom package on 2026-09-21. See [v2 Phase 1](hub-web-v2-phase1.md) for the current implementation.
 
 ## 1. Entry points
 

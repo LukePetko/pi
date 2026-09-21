@@ -10,26 +10,43 @@
 <body>
   <main>
     <header>
-      <div><p class="eyebrow">YOUR LOCAL WORKSPACE</p><h1>Pi <span>Hub</span><span class="mark" aria-hidden="true">✦</span></h1><p class="subtitle">A little breathing room for all your sessions.</p></div>
-      <div id="connection" class="connection" role="status">Connecting…</div>
+      <div><p class="eyebrow">YOUR LOCAL ATTENTION INBOX</p><h1>Pi <span>Hub</span><span class="mark" aria-hidden="true">✦</span></h1><p class="subtitle">Decide what needs you. Leave the rest running.</p></div>
+      <div class="header-controls">
+        <div id="connection" class="connection" role="status">Connecting…</div>
+        <label class="live-toggle"><input id="live-mode" type="checkbox"> Live updates</label>
+        <button id="refresh" type="button">Check-in every 25 min · refresh</button>
+      </div>
     </header>
-    <section class="toolbar" aria-label="Session filters">
-      <div><strong id="count">0</strong> <span>sessions</span> <span id="active-count"></span></div>
+    <section class="toolbar" aria-label="Attention and session filters">
+      <div class="attention-strip"><span>NEEDS YOU <strong id="needs-count">0</strong> <span id="longest"></span></span><span>REVIEW <strong id="review-count">0</strong></span><span>WORKING <strong id="working-count">0</strong></span><span>PARKED <strong id="parked-count">0</strong></span></div>
       <label><span class="sr-only">Filter sessions</span><input id="search" type="search" placeholder="Find a session, project, or model…" autocomplete="off"></label>
     </section>
     <p id="notice" role="status" hidden></p>
-    <div id="sessions" class="grid" aria-label="Live sessions"></div>
+    <div id="sessions" class="board" aria-label="Live sessions">
+      <div class="inbox">
+        <section aria-labelledby="needs-heading"><h2 id="needs-heading" class="section-heading">Needs you</h2><div id="needs-list" class="card-list"></div><p class="bucket-empty" id="needs-empty">Nothing waiting for you.</p></section>
+        <section aria-labelledby="review-heading"><h2 id="review-heading" class="section-heading">Ready for review</h2><div id="review-list" class="card-list"></div><p class="bucket-empty" id="review-empty">Nothing ready for review.</p></section>
+      </div>
+      <aside class="rail" aria-label="Background sessions">
+        <p class="phase-note">Phase 1 · returned/question status is inferred from presence and todos.</p>
+        <section aria-labelledby="working-heading"><h2 id="working-heading" class="section-heading">Working</h2><div id="working-list" class="row-list"></div><p class="bucket-empty">Nothing to do here.</p></section>
+        <section aria-labelledby="parked-heading"><h2 id="parked-heading" class="section-heading">Parked</h2><div id="parked-list" class="row-list"></div><details id="archive"><summary>Archive idle &gt; 72 h <span id="archive-count"></span></summary><div id="archive-list" class="row-list"></div></details></section>
+      </aside>
+    </div>
     <p id="empty" class="empty">Connecting to your local sessions…</p>
-    <footer><span>LOCAL ONLY <span aria-hidden="true">·</span> No prompts or messages sent</span><span>Open: <code>/hub-web</code> <span aria-hidden="true">·</span> Stop: <code>/hub-web stop</code></span></footer>
+    <footer><span>LOCAL ONLY · No prompts or messages sent · <span id="count">0</span> sessions <span id="active-count"></span></span><span>Open: <code>/hub-web</code> · Stop: <code>/hub-web stop</code></span></footer>
   </main>
   <template id="session-card">
-    <article class="card">
-      <div class="card-heading"><span class="dot" aria-hidden="true"></span><h2></h2><span class="activity"></span></div>
-      <p class="project"></p>
-      <p class="model"></p>
-      <div class="context"><span>Context</span><span class="context-label"></span></div>
+    <article class="card session-item">
+      <div class="card-heading"><span class="dot" aria-hidden="true"></span><h2></h2><code class="short-id"></code></div>
+      <div class="state-line"><span class="activity"></span><span class="state-age"></span><span class="risk" hidden></span></div>
+      <div class="session-meta"><p class="project"></p><p class="model"></p><p class="todo-progress"></p><div class="context"><span>Context</span><span class="context-label"></span></div></div>
+      <p class="current-task" hidden></p>
       <meter min="0" max="100" low="60" high="85" optimum="0" aria-label="Context usage"></meter>
-      <div class="card-bottom"><span class="age"></span><button type="button">Focus terminal <span aria-hidden="true">↗</span></button></div>
+      <dl class="reentry" hidden><dt>Goal</dt><dd class="goal"></dd><dt>Done so far</dt><dd class="done"></dd><dt>Needs you</dt><dd class="needs"></dd></dl>
+      <ul class="completed-todos" hidden></ul>
+      <p class="permission-caption" hidden>Approval follows your existing confirm-dialog rules. Hub never auto-approves.</p>
+      <div class="card-bottom"><span class="age"></span><div class="card-actions"><button class="focus" type="button">Open terminal ↗</button><button class="ack" type="button" hidden>Accept</button><button class="reply-unavailable" type="button" disabled hidden title="Reply transport is deferred to Phase 3">Reply in terminal</button></div></div>
     </article>
   </template>
 </body>

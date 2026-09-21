@@ -1,14 +1,18 @@
 import { timingSafeEqual } from "node:crypto";
+import { join } from "node:path";
+import { hubStateDir } from "./pi-hub-web-launcher.ts";
+import { attentionFields, lifecycleStatus, openAcknowledgements, type AttentionFields, type AttentionPermission } from "./hub-attention.ts";
+export { classify } from "./hub-attention.ts";
 import { loadHubBrowserAsset } from "./hub-browser-assets.ts";
 import type { HubTodos } from "./hub-todos.ts";
-import { inspectPermission, decidePermission, readPermissionAction, PermissionUnavailable,
-	type PermissionSummary, type PermissionRequest } from "./hub-permissions.ts";
+import { inspectPermission, decidePermission, describePermission, readPermissionAction, PermissionUnavailable,
+	type PermissionRequest } from "./hub-permissions.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SessionInfo } from "../../npm/node_modules/pi-intercom/types.ts";
 
-export interface HubSession extends SessionInfo {
+export interface HubSession extends SessionInfo, Partial<AttentionFields> {
 	todos?: HubTodos;
-	permissions?: PermissionSummary[];
+	permissions?: AttentionPermission[];
 }
 
 export interface HubSnapshot {
@@ -28,12 +32,14 @@ export interface HubServerOptions {
 	focus: (pid: number) => Promise<void>;
 	onStop?: () => void;
 	idleMs?: number;
+	stateFile?: string;
 	permissions?: { inspect: typeof inspectPermission; decide: typeof decidePermission };
 }
 
 const ASSETS = new Map([
 	["/", ["index.html", "text/html; charset=utf-8"]],
 	["/app.js", ["app.ts", "text/javascript; charset=utf-8"]],
+	["/board.js", ["board.ts", "text/javascript; charset=utf-8"]],
 	["/todos.js", ["todos.ts", "text/javascript; charset=utf-8"]],
 	["/permissions.js", ["permissions.ts", "text/javascript; charset=utf-8"]],
 	["/style.css", ["style.css", "text/css; charset=utf-8"]],
@@ -46,14 +52,14 @@ function authorized(req: IncomingMessage, token: string): boolean {
 }
 
 type HubReply =
-	| { permission: PermissionRequest } | { error: string } | { ok: true } | { service: "pi-hub-web"; version: 1; pid: number };
+	| { permission: PermissionRequest } | { error: string } | { ok: true; snapshot?: HubSnapshot } | { service: "pi-hub-web"; version: 1; pid: number };
 
 function reply(res: ServerResponse, status: number, body: HubReply): void {
 	res.writeHead(status, { "Content-Type": "application/json" });
 	res.end(JSON.stringify(body));
 }
 
-async function readTarget(req: IncomingMessage): Promise<string> {
+async function readTarget(req: IncomingMessage): Promise<{ id: string; lastAgentEnd?: number }> {
 	let body = "";
 	for await (const chunk of req) {
 		body += chunk.toString();
@@ -64,7 +70,8 @@ async function readTarget(req: IncomingMessage): Promise<string> {
 		if (!data || typeof data.id !== "string" || !data.id || data.id.length > 256) {
 			throw new Error("A session ID is required");
 		}
-		return data.id;
+		if (data.lastAgentEnd !== undefined && (!Number.isFinite(data.lastAgentEnd) || data.lastAgentEnd < 0)) throw new Error("Invalid completion stamp");
+		return { id: data.id, lastAgentEnd: data.lastAgentEnd };
 	} catch {
 		throw new Error("Invalid session ID request");
 	}
@@ -73,6 +80,13 @@ async function readTarget(req: IncomingMessage): Promise<string> {
 /** Loopback-only HTTP adapter. No agent messages, shell input, or arbitrary files. */
 export async function startHubServer(options: HubServerOptions) {
 	const { source, token } = options;
+	const acknowledgements = await openAcknowledgements(options.stateFile ?? join(hubStateDir(), "session.json"));
+	const gateway = options.permissions ?? { inspect: inspectPermission, decide: decidePermission };
+	const presentations = new Map<string, ReturnType<typeof describePermission> | null>();
+	const settled = new Set<string>();
+	const inspections: { key: string; session: HubSession; requestId: string }[] = [];
+	let inspecting = 0;
+	const permissionKey = (session: HubSession, requestId: string) => JSON.stringify([session.id, session.pid, session.startedAt, requestId]);
 	const assets = new Map<string, { content: string; type: string }>();
 	for (const [route, [file, type]] of ASSETS) {
 		assets.set(route, {
@@ -94,13 +108,81 @@ export async function startHubServer(options: HubServerOptions) {
 		}
 	}
 
-	function sendSnapshot(res: ServerResponse): void {
+	function snapshot(replacement?: SessionInfo): HubSnapshot {
+		const state = source.snapshot();
+		return { ...state, sessions: state.sessions.map(original => {
+			const session = replacement?.id === original.id && replacement.pid === original.pid && replacement.startedAt === original.startedAt
+				&& (!Number.isFinite(original.lastActivity) || replacement.lastActivity > original.lastActivity)
+				? { ...original, ...replacement } : original;
+			const permissions = (session.permissions ?? []).filter(item => !settled.has(permissionKey(session, item.id)))
+				.map(item => ({ ...item, ...presentations.get(permissionKey(session, item.id)) }));
+			const enriched = { ...session, permissions };
+			return { ...enriched, ...attentionFields(enriched, acknowledgements.get()) };
+		}) };
+	}
+
+	function broadcast(value = snapshot()): void {
+		if (!closing) for (const response of streams) sendSnapshot(response, value);
+	}
+
+	function inspectNext(): void {
+		while (!closing && inspecting < 4 && inspections.length) {
+			const item = inspections.shift()!;
+			if (!presentations.has(item.key)) continue;
+			inspecting++;
+			void Promise.resolve().then(() => gateway.inspect(item.session, item.requestId)).then(full => describePermission(full))
+				.catch(() => ({ risk: "high" as const, tool: "unknown", summary: "Request details unavailable; use the terminal." }))
+				.then(value => { if (presentations.has(item.key)) presentations.set(item.key, value); })
+				.finally(() => { inspecting--; broadcast(); inspectNext(); });
+		}
+	}
+
+	function refresh(): void {
+		const state = source.snapshot();
+		const wanted = new Set<string>();
+		for (const session of state.connected ? state.sessions : []) for (const permission of session.permissions ?? []) {
+			const key = permissionKey(session, permission.id);
+			wanted.add(key);
+			if (!presentations.has(key)) {
+				presentations.set(key, null);
+				inspections.push({ key, session, requestId: permission.id });
+			}
+		}
+		for (const key of presentations.keys()) if (!wanted.has(key)) presentations.delete(key);
+		for (const key of settled) if (!wanted.has(key)) settled.delete(key);
+		broadcast();
+		inspectNext();
+	}
+
+	async function acknowledge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+		if (req.headers["content-type"] !== "application/json") { reply(res, 415, { error: "Expected application/json" }); return; }
+		let target: Awaited<ReturnType<typeof readTarget>>;
+		try { target = await readTarget(req); }
+		catch { reply(res, 400, { error: "Invalid acknowledgement" }); return; }
+		try {
+			const fresh = await source.resolveSession(target.id);
+			const current = snapshot().sessions.find(session => session.id === target.id);
+			if (!fresh || !current) { reply(res, 404, { error: "Session is no longer available" }); return; }
+			if (!source.snapshot().connected || fresh.pid !== current.pid || fresh.startedAt !== current.startedAt
+				|| lifecycleStatus(fresh.status) !== "idle" || lifecycleStatus(current.status) !== "idle" || current.lastActivity > fresh.lastActivity
+				|| current.permissions?.length || !Number.isFinite(fresh.lastActivity) || fresh.lastActivity < 0
+				|| (target.lastAgentEnd !== undefined && target.lastAgentEnd !== fresh.lastActivity)) {
+				reply(res, 409, { error: "Session changed or is still working/waiting for permission. Refresh before accepting." }); return;
+			}
+			await acknowledgements.set(fresh.id, fresh.lastActivity);
+			const value = snapshot(fresh);
+			reply(res, 200, { ok: true, snapshot: value });
+			broadcast(value);
+		} catch { reply(res, 503, { error: "Could not persist acknowledgement" }); }
+	}
+
+	function sendSnapshot(res: ServerResponse, value = snapshot()): void {
 		// A slow browser must not accumulate an unbounded event backlog.
 		if (res.writableLength > 256 * 1024) {
 			res.destroy();
 			return;
 		}
-		res.write(`data: ${JSON.stringify(source.snapshot())}\n\n`);
+		res.write(`data: ${JSON.stringify(value)}\n\n`);
 	}
 
 	async function focus(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -114,7 +196,7 @@ export async function startHubServer(options: HubServerOptions) {
 		}
 		let id: string;
 		try {
-			id = await readTarget(req);
+			id = (await readTarget(req)).id;
 		} catch {
 			reply(res, 400, { error: "Invalid session ID request" });
 			return;
@@ -154,10 +236,12 @@ export async function startHubServer(options: HubServerOptions) {
 			if (!session || !Number.isSafeInteger(session.pid) || session.pid <= 1) {
 				reply(res, 404, { error: "Session is no longer available" }); return;
 			}
-			const gateway = options.permissions ?? { inspect: inspectPermission, decide: decidePermission };
 			if (decide) {
 				await gateway.decide(session, action.requestId, action.decision!);
-				reply(res, 200, { ok: true });
+				settled.add(permissionKey(session, action.requestId));
+				const value = snapshot(session);
+				reply(res, 200, { ok: true, snapshot: value });
+				broadcast(value);
 			} else {
 				reply(res, 200, { permission: await gateway.inspect(session, action.requestId) });
 			}
@@ -203,6 +287,8 @@ export async function startHubServer(options: HubServerOptions) {
 			armIdle();
 			res.on("close", () => { streams.delete(res); armIdle(); });
 			sendSnapshot(res);
+		} else if (req.method === "POST" && req.headers.origin === origin && route === "/api/ack") {
+			await acknowledge(req, res);
 		} else if (req.method === "POST" && req.headers.origin === origin && route === "/api/focus") {
 			await focus(req, res);
 		} else if (req.method === "POST" && req.headers.origin === origin &&
@@ -231,7 +317,8 @@ export async function startHubServer(options: HubServerOptions) {
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("No Hub TCP address");
 	origin = `http://127.0.0.1:${address.port}`;
-	const unsubscribe = source.subscribe(() => { for (const res of streams) sendSnapshot(res); });
+	const unsubscribe = source.subscribe(refresh);
+	refresh();
 	const heartbeat = setInterval(() => {
 		for (const res of streams) {
 			if (res.writableLength > 256 * 1024) res.destroy();
@@ -247,6 +334,9 @@ export async function startHubServer(options: HubServerOptions) {
 		clearTimeout(idleTimer);
 		clearInterval(heartbeat);
 		unsubscribe();
+		inspections.length = 0;
+		presentations.clear();
+		await acknowledgements.flush();
 		for (const res of streams) res.end();
 		await new Promise<void>((resolve) => {
 			server.close(() => resolve());

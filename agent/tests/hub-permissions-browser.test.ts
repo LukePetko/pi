@@ -37,8 +37,9 @@ test("full permission requests appear in yellow and browser approval resolves th
 	const browser = await openTestBrowser(t, chrome);
 	await browser.call("Page.navigate", { url: `${hub.origin}/#${token}` });
 	await browser.waitFor('document.querySelector(".permission-input") && !document.querySelector("[data-decision=once]").disabled');
+	await browser.evaluate('document.querySelector("#live-mode").click()');
 	assert.equal(await browser.evaluate('document.querySelector(".activity").textContent'), "Permission needed");
-	assert.equal(await browser.evaluate('getComputedStyle(document.querySelector(".activity")).color'), "rgb(237, 203, 116)");
+	assert.equal(await browser.evaluate('getComputedStyle(document.querySelector(".activity")).color'), "rgb(240, 198, 116)");
 	assert.equal(await browser.evaluate('document.querySelector(".permission-input").textContent'), input, "full input is shown without truncation");
 	assert.equal(await browser.evaluate('document.querySelectorAll(".permission-request img").length'), 0);
 	assert.equal(await browser.evaluate("window.pwned === undefined"), true);
@@ -51,6 +52,7 @@ test("full permission requests appear in yellow and browser approval resolves th
 	assert.equal((await api("once")).status, 401);
 	assert.equal((await api("once", { Authorization: `Bearer ${token}`, Origin: "https://evil.example" })).status, 403);
 	assert.equal((await api("always", { Authorization: `Bearer ${token}`, Origin: hub.origin })).status, 400);
+	assert.equal((await api("session", { Authorization: `Bearer ${token}`, Origin: hub.origin })).status, 400);
 	assert.deepEqual(decisions, []);
 	await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 	assert.equal(await browser.evaluate("document.documentElement.scrollWidth <= innerWidth"), true);
@@ -58,7 +60,7 @@ test("full permission requests appear in yellow and browser approval resolves th
 	await browser.waitFor('!document.querySelector(".permission-request")');
 	assert.deepEqual(decisions, ["once"]);
 	assert.deepEqual(focused, [], "permission controls never trigger Focus terminal");
-	assert.equal(await browser.evaluate('document.querySelector(".activity").textContent'), "idle");
+	assert.equal(await browser.evaluate('document.querySelector(".activity").textContent'), "Ready for review");
 	assert.equal((await api("once", { Authorization: `Bearer ${token}`, Origin: hub.origin })).status, 409);
 	const local = broker.request(session, details, (decision) => decisions.push(decision));
 	await local.ready;

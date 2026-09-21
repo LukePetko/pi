@@ -33,19 +33,21 @@ test("browser renders live cards safely, filters, focuses, and fits mobile", { s
 	await browser.call("Emulation.setDeviceMetricsOverride", { width: 1200, height: 850, deviceScaleFactor: 1, mobile: false });
 	await browser.call("Page.navigate", { url: `${hub.origin}/#${token}` });
 	await browser.waitFor('document.querySelectorAll(".card").length === 3');
+	await browser.evaluate('document.querySelector("#live-mode").click()');
 	assert.equal(await browser.evaluate('document.querySelector("#connection").textContent'), "● Live · local");
 	assert.equal(await browser.evaluate("location.hash"), "");
 	assert.equal(await browser.evaluate('document.querySelectorAll(".card img").length'), 0);
 	assert.equal(await browser.evaluate("window.pwned === undefined"), true);
-	await browser.evaluate('document.querySelector("#search").value = "billing"; document.querySelector("#search").dispatchEvent(new Event("input"))');
+	assert.equal(await browser.evaluate('getComputedStyle(document.querySelector(\'[data-session-id="billing"] .card-bottom\')).display'), "none", "working rows have no visible action buttons");
+	await browser.evaluate('document.querySelector("#search").value = "design"; document.querySelector("#search").dispatchEvent(new Event("input"))');
 	assert.equal(await browser.evaluate('document.querySelectorAll(".card:not([hidden])").length'), 1);
 	await browser.evaluate('document.querySelector(".card:not([hidden]) button").click()');
 	await browser.waitFor('!document.querySelector(".card:not([hidden]) button").disabled');
-	assert.deepEqual(focused, [1234]);
+	assert.deepEqual(focused, [2345]);
 
 	state = { ...state, sessions: state.sessions.filter((session) => session.id !== "xss").map((session) => session.id === "billing" ? { ...session, status: "tool:edit", contextPct: 55 } : session) };
 	for (const listener of listeners) listener();
-	await browser.waitFor('document.querySelectorAll(".card").length === 2 && document.querySelector(".context-label").textContent === "55%"');
+	await browser.waitFor('document.querySelectorAll(".card").length === 2 && document.querySelector(\'[data-session-id="billing"] .context-label\').textContent === "55%"');
 	await browser.evaluate('document.querySelector("#search").value = ""; document.querySelector("#search").dispatchEvent(new Event("input"))');
 	if (process.env.PI_HUB_SCREENSHOT) {
 		const { data } = await browser.call("Page.captureScreenshot", { format: "png" });

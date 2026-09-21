@@ -42,6 +42,7 @@ test("Hub todo panels are safe, keyboard/click collapsible, live, independent, a
 	await browser.call("Emulation.setDeviceMetricsOverride", { width: 1200, height: 850, deviceScaleFactor: 1, mobile: false });
 	await browser.call("Page.navigate", { url: `${hub.origin}/#${token}` });
 	await browser.waitFor('document.querySelectorAll(".todos").length === 2');
+	await browser.evaluate('document.querySelector("#live-mode").click()');
 	assert.equal(await browser.evaluate('document.querySelector(".todos-summary").textContent'), "Todos (1/3) - Build widget");
 	assert.equal(await browser.evaluate('document.querySelectorAll(".todos[open]").length'), 0);
 	await browser.evaluate('document.querySelector(".todos-summary").click()');
@@ -66,7 +67,7 @@ test("Hub todo panels are safe, keyboard/click collapsible, live, independent, a
 	state = { ...state, sessions: state.sessions.map((session) => session.id === "Beta" ? { ...session, status: "thinking" } : session) };
 	for (const listener of listeners) listener();
 	await browser.waitFor('document.querySelector(".card.busy h2")?.textContent === "Beta"');
-	assert.equal(await browser.evaluate('document.querySelector("h2").textContent'), "Alpha", "thinking does not move a card ahead of an older session");
+	assert.equal(await browser.evaluate('document.querySelector(".card h2").textContent'), "Alpha", "working stays in the background rail, behind the attention card");
 	assert.equal(await browser.evaluate('document.querySelector(".todos[open]").closest(".card").querySelector("h2").textContent'), "Alpha", "status updates preserve per-session collapse state");
 	await browser.evaluate('document.querySelector("#search").value = "Alpha"; document.querySelector("#search").dispatchEvent(new Event("input"))');
 	assert.equal(await browser.evaluate('document.querySelectorAll(".card:not([hidden])").length'), 1);
