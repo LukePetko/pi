@@ -145,7 +145,7 @@ test("focus failures are bounded responses and concurrent focus requests are rej
 
 test("an open dashboard prevents idle shutdown; closing it starts the idle countdown", async (t) => {
 	let didStop = false;
-	const hub = await fixture(t, { idleMs: 100, onStop: () => { didStop = true; } });
+	const hub = await fixture(t, { lifetime: "browser-idle", idleMs: 100, onStop: () => { didStop = true; } });
 	const stream = await event(await hub.get("/api/events"));
 	await stream.next();
 	await sleep(200);
@@ -157,7 +157,7 @@ test("an open dashboard prevents idle shutdown; closing it starts the idle count
 
 test("idle startup and authenticated explicit stop both shut down the server", async (t) => {
 	let idleStopped = false;
-	await fixture(t, { idleMs: 50, onStop: () => { idleStopped = true; } });
+	await fixture(t, { lifetime: "browser-idle", idleMs: 50, onStop: () => { idleStopped = true; } });
 	await sleep(150);
 	assert.equal(idleStopped, true);
 	const hub = await fixture(t);

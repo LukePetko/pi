@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -49,16 +49,14 @@ test("concurrent launchers reuse one detached server; real scoped Intercom updat
 		await sleep(5_500);
 		await rm(dir, { recursive: true, force: true });
 	});
-	const code = `import { ensureHubWeb } from ${JSON.stringify(launcherUrl)}; process.stdout.write(JSON.stringify(await ensureHubWeb()));`;
+	const code = `import { startHubWeb } from ${JSON.stringify(launcherUrl)}; process.stdout.write(JSON.stringify(await startHubWeb()));`;
 	const launch = () => execute(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", code], { env, timeout: 25_000 });
 	const results = await Promise.all([launch(), launch()]);
 	endpoint = JSON.parse(results[0].stdout);
 	assert.deepEqual(JSON.parse(results[1].stdout), endpoint);
 	assert.equal(await healthy(endpoint), true, "server must survive both launcher exits");
-	// A launcher dying after startup must not make its healthy server unusable.
-	await writeFile(join(stateDir, "launch.lock"), "incomplete crashed-launcher lock", { mode: 0o600 });
+	// All control operations now take the lock, including healthy reuse.
 	assert.deepEqual(JSON.parse((await launch()).stdout), endpoint);
-	await unlink(join(stateDir, "launch.lock"));
 	assert.equal((await stat(stateDir)).mode & 0o777, 0o700);
 	assert.equal((await stat(join(stateDir, "endpoint.json"))).mode & 0o777, 0o600);
 	assert.equal((await readFile(join(stateDir, "endpoint.json"), "utf8")).includes(endpoint.token), true);

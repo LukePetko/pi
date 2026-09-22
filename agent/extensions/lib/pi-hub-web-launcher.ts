@@ -1,17 +1,23 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { accessSync, constants } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { isAlive, readControl, withHubControl, writeDesired } from "./pi-hub-service-control.ts";
 
+export const HUB_CAPABILITIES = ["resident-lifecycle-v1"];
 export interface HubEndpoint {
 	version: 1;
 	pid: number;
 	origin: string;
 	token: string;
+	instance?: string;
+	mode?: "resident" | "browser-idle";
+	capabilities?: string[];
 }
 
 export function hubStateDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -24,10 +30,14 @@ export function hubStateDir(env: NodeJS.ProcessEnv = process.env): string {
 export function hubRuntimeCommand(): { command: string; args: string[] } {
 	const directory = dirname(fileURLToPath(import.meta.url));
 	const require = createRequire(join(directory, "../../npm/node_modules/pi-intercom/package.json"));
-	return {
-		command: process.versions.bun ? "node" : process.execPath,
-		args: ["--import", require.resolve("tsx"), join(directory, "pi-hub-web-main.ts")],
-	};
+	let command = process.execPath;
+	if (process.versions.bun) {
+		command = (process.env.PATH ?? "").split(delimiter).filter(isAbsolute).map((entry) => join(entry, "node")).find((entry) => {
+			try { accessSync(entry, constants.X_OK); return true; } catch { return false; }
+		}) ?? "";
+		if (!command) throw new Error("Hub requires an installed Node executable");
+	}
+	return { command, args: ["--import", require.resolve("tsx"), join(directory, "pi-hub-web-main.ts")] };
 }
 
 export async function readEndpoint(path: string): Promise<HubEndpoint | undefined> {
@@ -38,119 +48,115 @@ export async function readEndpoint(path: string): Promise<HubEndpoint | undefine
 			typeof value.origin !== "string" || !/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(value.origin)) return undefined;
 		const port = Number(new URL(value.origin).port);
 		return port > 0 && port <= 65535 ? value : undefined;
-	} catch {
-		return undefined;
-	}
+	} catch { return undefined; }
 }
 
-function isAlive(pid: number): boolean {
-	try { process.kill(pid, 0); return true; }
-	catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+export function compatible(endpoint: HubEndpoint): boolean {
+	return typeof endpoint.instance === "string" && /^[a-f0-9-]{36}$/.test(endpoint.instance) && endpoint.mode === "resident" &&
+		Array.isArray(endpoint.capabilities) && HUB_CAPABILITIES.every((capability) => endpoint.capabilities!.includes(capability));
 }
 
-export async function healthy(endpoint: HubEndpoint): Promise<boolean> {
+async function probe(endpoint: HubEndpoint): Promise<{ connected: boolean } | undefined> {
 	try {
 		const response = await fetch(`${endpoint.origin}/api/health`, {
 			headers: { Authorization: `Bearer ${endpoint.token}` },
-			signal: AbortSignal.timeout(1_000),
-			redirect: "error",
+			signal: AbortSignal.timeout(1_000), redirect: "error",
 		});
-		if (!response.ok) return false;
+		if (!response.ok) return undefined;
 		const value = await response.json();
-		return value.service === "pi-hub-web" && value.version === 1 && value.pid === endpoint.pid;
-	} catch { return false; }
+		if (value.service !== "pi-hub-web" || value.version !== 1 || value.pid !== endpoint.pid ||
+			value.instance !== endpoint.instance || value.mode !== endpoint.mode ||
+			JSON.stringify(value.capabilities) !== JSON.stringify(endpoint.capabilities)) return undefined;
+		return { connected: value.connected === true };
+	} catch { return undefined; }
 }
 
-async function acquireLock(path: string): Promise<() => Promise<void>> {
-	const deadline = Date.now() + 20_000;
-	const id = randomUUID();
-	while (Date.now() < deadline) {
+export async function healthy(endpoint: HubEndpoint): Promise<boolean> { return !!await probe(endpoint); }
+
+export async function hubStatus(stateDir = hubStateDir()) {
+	const control = await readControl(stateDir);
+	const endpoint = await readEndpoint(join(stateDir, "endpoint.json"));
+	const health = endpoint ? await probe(endpoint) : undefined;
+	let service = endpoint ? health ? (compatible(endpoint) ? "running" : "incompatible") : isAlive(endpoint.pid) ? "unhealthy-or-unverified" : "stale" : "absent";
+	if (service === "absent" || service === "stale") {
 		try {
-			const file = await open(path, "wx", 0o600);
-			try { await file.writeFile(JSON.stringify({ pid: process.pid, id })); }
-			finally { await file.close(); }
-			return async () => {
-				try {
-					const owner = JSON.parse(await readFile(path, "utf8"));
-					if (owner.id === id) await unlink(path);
-				} catch { /* Already removed during shutdown. */ }
-			};
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-		}
-		// Reap crashed launchers only after a grace period; never steal a live lock.
-		try {
-			const before = await stat(path);
-			if (Date.now() - before.mtimeMs > 30_000) {
-				let alive = false;
-				try {
-					const owner = JSON.parse(await readFile(path, "utf8"));
-					alive = Number.isSafeInteger(owner.pid) && owner.pid > 1 && isAlive(owner.pid);
-				} catch { /* Incomplete lock left by a crashed writer. */ }
-				const now = await stat(path);
-				if (!alive && before.ino === now.ino && before.mtimeMs === now.mtimeMs) await unlink(path);
-			}
-		} catch { /* Another launcher released it. */ }
-		await sleep(100);
+			const lock = JSON.parse(await readFile(join(stateDir, "launch.lock"), "utf8"));
+			if (Number.isSafeInteger(lock.pid) && lock.pid > 1 && isAlive(lock.pid)) service = "control-in-progress";
+		} catch { /* Read-only status never repairs a stale lock. */ }
 	}
-	throw new Error("Hub startup is locked by another Pi. Retry in a moment.");
+	return { desired: control?.desired ?? "unset", service, connected: health?.connected ?? null, autostart: "not-managed" };
 }
 
-function spawnBridge(endpointFile: string): ChildProcess {
-	const runtime = hubRuntimeCommand();
-	const child = spawn(runtime.command, [...runtime.args, "--serve", endpointFile], {
-		detached: true,
-		stdio: ["ignore", "ignore", "pipe"],
-	});
-	child.unref();
-	return child;
-}
-
-/** Serialize launch attempts across Pi instances; reuse only authenticated endpoints. */
-export async function ensureHubWeb(stateDir = hubStateDir()): Promise<HubEndpoint> {
-	await mkdir(stateDir, { recursive: true, mode: 0o700 });
-	await chmod(stateDir, 0o700);
-	const endpointFile = join(stateDir, "endpoint.json");
-	const running = await readEndpoint(endpointFile);
-	if (running && await healthy(running)) return running;
-	const release = await acquireLock(join(stateDir, "launch.lock"));
-	try {
+async function start(stateDir: string, explicit: boolean): Promise<HubEndpoint> {
+	return withHubControl(stateDir, async () => {
+		const control = await readControl(stateDir);
+		if (!explicit && control?.desired === "stopped") throw new Error("Hub is stopped by user. Use hub start or /hub-web to resume.");
+		const endpointFile = join(stateDir, "endpoint.json");
 		const previous = await readEndpoint(endpointFile);
-		if (previous && await healthy(previous)) return previous;
-		if (previous && isAlive(previous.pid)) {
-			throw new Error("The Hub process is alive but unresponsive. Stop it before reopening.");
+		if (previous && await healthy(previous)) {
+			if (!compatible(previous)) throw new Error("Incompatible Hub is running; stop the old service before starting this version.");
+			if (explicit || !control) await writeDesired(stateDir, "running");
+			return previous;
 		}
-		const child = spawnBridge(endpointFile);
+		if (previous && isAlive(previous.pid)) throw new Error("Hub endpoint is unverified but its PID is alive. No process was killed; inspect it before restarting.");
+		const runtime = hubRuntimeCommand();
+		await writeDesired(stateDir, "running");
+		const child = spawn(runtime.command, [...runtime.args, "--serve", endpointFile], {
+			detached: true, stdio: "ignore",
+			cwd: dirname(fileURLToPath(import.meta.url)),
+			env: { ...process.env, PI_CODING_AGENT_DIR: resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent")), PI_INTERCOM_SCOPE_ID: process.env.PI_INTERCOM_SCOPE_ID?.trim() ?? "" },
+		});
+		child.unref();
 		let failure = "";
-		let spawnFailed = false;
-		child.on("error", (error) => { failure = error.message; spawnFailed = true; });
-		child.stderr?.on("data", (data) => { failure = (failure + data.toString()).slice(-2000); });
-		try {
-			const deadline = Date.now() + 15_000;
-			while (Date.now() < deadline) {
-				if (spawnFailed || child.exitCode !== null || child.signalCode !== null) break;
-				const endpoint = await readEndpoint(endpointFile);
-				if (endpoint && endpoint.pid === child.pid && await healthy(endpoint)) return endpoint;
-				await sleep(100);
-			}
-			child.kill("SIGTERM");
-			throw new Error(`Could not start Pi Hub web${failure ? `: ${failure}` : " (startup timed out)"}`);
-		} finally {
-			// No pipe back to the launching Pi: the server survives its exit/reload.
-			child.stderr?.destroy();
+		child.on("error", (error) => { failure = error.message; });
+		const deadline = Date.now() + 15_000;
+		while (Date.now() < deadline) {
+			if (failure || child.exitCode !== null || child.signalCode !== null) break;
+			const endpoint = await readEndpoint(endpointFile);
+			if (endpoint && endpoint.pid === child.pid && compatible(endpoint) && await healthy(endpoint)) return endpoint;
+			await sleep(100);
 		}
-	} finally { await release(); }
+		// Only the child we just created, never a PID taken from discovery state.
+		child.kill("SIGTERM");
+		throw new Error(`Could not start Pi Hub${failure ? `: ${failure}` : "; see private service.log.json (or check Node/tsx installation)"}`);
+	});
 }
+
+/** Automatic clients must honor explicit stopped intent. */
+export async function ensureHubWeb(stateDir = hubStateDir()): Promise<HubEndpoint> { return start(stateDir, false); }
+/** Explicit user start/open clears stopped intent. */
+export async function startHubWeb(stateDir = hubStateDir()): Promise<HubEndpoint> { return start(stateDir, true); }
 
 export async function stopHubWeb(stateDir = hubStateDir()): Promise<boolean> {
-	const endpoint = await readEndpoint(join(stateDir, "endpoint.json"));
-	if (!endpoint || !await healthy(endpoint)) return false;
-	const response = await fetch(`${endpoint.origin}/api/stop`, {
-		method: "POST",
-		headers: { Authorization: `Bearer ${endpoint.token}`, Origin: endpoint.origin },
-		signal: AbortSignal.timeout(3_000),
-		redirect: "error",
+	const transaction = await withHubControl(stateDir, async () => {
+		const endpoint = await readEndpoint(join(stateDir, "endpoint.json"));
+		const control = await writeDesired(stateDir, "stopped");
+		if (endpoint && await healthy(endpoint) && compatible(endpoint)) return { endpoint, revision: control.revision };
+		if (endpoint && (await healthy(endpoint) || isAlive(endpoint.pid))) throw new Error("Stopped intent saved, but an incompatible or unverified process remains. No process was killed.");
+		return undefined;
 	});
-	if (!response.ok) throw new Error("Could not stop Pi Hub web");
+	if (!transaction) return false;
+	const { endpoint, revision } = transaction;
+	// The authenticated service takes the same control lock, checks this intent revision,
+	// and closes before releasing it. Do not hold the lock across this request.
+	try {
+		const response = await fetch(`${endpoint.origin}/api/stop`, {
+			method: "POST", headers: { Authorization: `Bearer ${endpoint.token}`, Origin: endpoint.origin,
+				"X-Pi-Hub-Control-Revision": revision, "X-Pi-Hub-Instance": endpoint.instance! },
+			signal: AbortSignal.timeout(40_000), redirect: "error",
+		});
+		if (response.status === 409) throw new Error("Hub stop superseded by a newer user action");
+		if (!response.ok) throw new Error("Could not stop Pi Hub");
+	} catch (error) {
+		// Another stop (or a crash) may close the endpoint between probe and request.
+		const stopped = await withHubControl(stateDir, async () => {
+			const current = await readEndpoint(join(stateDir, "endpoint.json"));
+			return (await readControl(stateDir))?.desired === "stopped" &&
+				(!current || (!await healthy(current) && !isAlive(current.pid)));
+		});
+		if (!stopped) throw error;
+	}
+	// Barrier: the API sends its reply before closing connections; wait for its transaction.
+	await withHubControl(stateDir, async () => {});
 	return true;
 }

@@ -32,6 +32,10 @@ export interface HubServerOptions {
 	source: HubSource;
 	focus: (pid: number) => Promise<void>;
 	onStop?: () => void;
+	requestStop?: (close: () => Promise<void>, fence?: { revision: string; instance: string }) => Promise<boolean>;
+	instance?: string;
+	capabilities?: string[];
+	lifetime?: "resident" | "browser-idle";
 	idleMs?: number;
 	stateFile?: string;
 	permissions?: { inspect: typeof inspectPermission; decide: typeof decidePermission };
@@ -53,7 +57,7 @@ function authorized(req: IncomingMessage, token: string): boolean {
 }
 
 type HubReply =
-	| { permission: PermissionRequest } | { error: string } | { ok: true; snapshot?: HubSnapshot } | { service: "pi-hub-web"; version: 1; pid: number };
+	| { permission: PermissionRequest } | { error: string } | { ok: true; snapshot?: HubSnapshot } | { service: "pi-hub-web"; version: 1; pid: number; instance?: string; mode: string; capabilities?: string[]; connected: boolean };
 
 function reply(res: ServerResponse, status: number, body: HubReply): void {
 	res.writeHead(status, { "Content-Type": "application/json" });
@@ -106,7 +110,7 @@ export async function startHubServer(options: HubServerOptions) {
 
 	function armIdle(): void {
 		clearTimeout(idleTimer);
-		if (!closing && streams.size === 0) {
+		if (options.lifetime === "browser-idle" && !closing && streams.size === 0) {
 			idleTimer = setTimeout(() => void close(), options.idleMs ?? 5 * 60_000);
 			idleTimer.unref();
 		}
@@ -276,6 +280,10 @@ export async function startHubServer(options: HubServerOptions) {
 			reply(res, 403, { error: "Origin not allowed" });
 			return;
 		}
+		if (closing) {
+			reply(res, 503, { error: "Hub is stopping" });
+			return;
+		}
 		const route = req.url ?? "/";
 		const asset = assets.get(route);
 		if (req.method === "GET" && asset) {
@@ -289,7 +297,9 @@ export async function startHubServer(options: HubServerOptions) {
 		}
 		if (req.method === "GET" && route === "/api/health") {
 			armIdle();
-			reply(res, 200, { service: "pi-hub-web", version: 1, pid: process.pid });
+			reply(res, 200, { service: "pi-hub-web", version: 1, pid: process.pid,
+				instance: options.instance, mode: options.lifetime ?? "resident", capabilities: options.capabilities,
+				connected: source.snapshot().connected });
 		} else if (req.method === "GET" && route === "/api/events") {
 			if (streams.size >= 16) {
 				reply(res, 429, { error: "Too many dashboard connections" });
@@ -308,8 +318,24 @@ export async function startHubServer(options: HubServerOptions) {
 			(route === "/api/permissions/inspect" || route === "/api/permissions/decision")) {
 			await permission(req, res, route.endsWith("/decision"));
 		} else if (req.method === "POST" && req.headers.origin === origin && route === "/api/stop") {
-			reply(res, 200, { ok: true });
-			void close();
+			const shutdown = async () => {
+				reply(res, 200, { ok: true });
+				await close();
+			};
+			const revision = req.headers["x-pi-hub-control-revision"];
+			const instance = req.headers["x-pi-hub-instance"];
+			let fence: { revision: string; instance: string } | undefined;
+			if (revision !== undefined || instance !== undefined) {
+				if (typeof revision !== "string" || typeof instance !== "string" ||
+					!/^[a-f0-9-]{36}$/.test(revision) || !/^[a-f0-9-]{36}$/.test(instance)) {
+					reply(res, 400, { error: "Invalid stop transaction" });
+					return;
+				}
+				fence = { revision, instance };
+			}
+			if (options.requestStop) {
+				if (!await options.requestStop(shutdown, fence)) reply(res, 409, { error: "Stop superseded by a newer user action" });
+			} else await shutdown();
 		} else {
 			reply(res, 404, { error: "Not found" });
 		}

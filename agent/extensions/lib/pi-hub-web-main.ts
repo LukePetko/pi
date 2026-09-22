@@ -1,8 +1,10 @@
 import { execFile, execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { rename, unlink, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { hubRuntimeCommand, readEndpoint } from "./pi-hub-web-launcher.ts";
+import { HUB_CAPABILITIES, hubRuntimeCommand, readEndpoint } from "./pi-hub-web-launcher.ts";
+import { atomicPrivateJson, logHubLifecycle, readControl, withHubControl, writeDesired } from "./pi-hub-service-control.ts";
 import { focusPiSession } from "./pi-hub-navigation.ts";
 import { startHubServer } from "./pi-hub-web-server.ts";
 import { IntercomHubSource } from "./pi-hub-web-source.ts";
@@ -22,38 +24,67 @@ async function focusInWorker(pid: number, signal: AbortSignal): Promise<void> {
 
 async function serve(endpointFile: string): Promise<void> {
 	const token = randomBytes(32).toString("hex");
+	const instance = randomUUID();
+	const stateDir = dirname(endpointFile);
 	const source = new IntercomHubSource();
 	const shutdown = new AbortController();
 	let server: Awaited<ReturnType<typeof startHubServer>> | undefined;
 	let stopping = false;
-	async function stop(): Promise<void> {
-		if (stopping) return;
+	let stopPromise: Promise<void> | undefined;
+	let finishStartup!: () => void;
+	const startupFinished = new Promise<void>((resolve) => { finishStartup = resolve; });
+	function stop(): Promise<void> {
+		if (stopPromise) return stopPromise;
 		stopping = true;
 		shutdown.abort();
+		// Keep the deadline alive even if construction never resumes. Shutdown cannot
+		// finish before late-created resources/publication have been accounted for.
 		const forceExit = setTimeout(() => process.exit(0), 2_000);
-		forceExit.unref();
-		await server?.close();
-		await source.close();
-		const endpoint = await readEndpoint(endpointFile);
-		if (endpoint?.token === token) await unlink(endpointFile).catch(() => {});
-		process.exit(0);
+		stopPromise = (async () => {
+			await startupFinished;
+			await server?.close();
+			await source.close();
+			const endpoint = await readEndpoint(endpointFile);
+			if (endpoint?.token === token) await unlink(endpointFile).catch(() => {});
+			await logHubLifecycle(stateDir, "stopped");
+			clearTimeout(forceExit);
+		})();
+		return stopPromise;
 	}
 	process.on("SIGTERM", () => void stop());
 	process.on("SIGINT", () => void stop());
-	server = await startHubServer({ source: withHubTodos(source), token, focus: (pid) => focusInWorker(pid, shutdown.signal), onStop: () => void stop() });
-	const temporary = `${endpointFile}.${process.pid}.tmp`;
-	try {
-		await writeFile(temporary, JSON.stringify({ version: 1, pid: process.pid, origin: server.origin, token }), {
-			mode: 0o600,
-			flag: "wx",
+	async function initialize(): Promise<void> {
+		server = await startHubServer({
+			source: withHubTodos(source), token, instance, capabilities: HUB_CAPABILITIES, lifetime: "resident",
+			stateFile: join(stateDir, "session.json"),
+			focus: (pid) => focusInWorker(pid, shutdown.signal),
+			requestStop: (close, fence) => withHubControl(stateDir, async () => {
+				// Old requests cannot stop a replacement instance or supersede a later start.
+				if ((await readEndpoint(endpointFile))?.instance !== instance) return false;
+				if (fence) {
+					const control = await readControl(stateDir);
+					if (fence.instance !== instance || control?.revision !== fence.revision || control.desired !== "stopped") return false;
+				} else await writeDesired(stateDir, "stopped");
+				await close();
+				await stop();
+				return true;
+			}),
 		});
-		await rename(temporary, endpointFile);
-	} catch (error) {
-		await unlink(temporary).catch(() => {});
-		await server.close();
-		throw error;
+		if (stopping) return;
+		await atomicPrivateJson(endpointFile, { version: 1, pid: process.pid, origin: server.origin, token,
+			instance, mode: "resident", capabilities: HUB_CAPABILITIES }, shutdown.signal);
+		if (stopping) return;
+		await logHubLifecycle(stateDir, "started resident service");
+		if (!stopping) void source.start();
 	}
-	void source.start();
+	try {
+		await initialize();
+	} catch (error) {
+		finishStartup();
+		await stop();
+		if (!(error instanceof Error && error.name === "AbortError")) throw error;
+	} finally { finishStartup(); }
+	if (stopping) await stop();
 }
 
 async function main(): Promise<void> {
@@ -72,7 +103,10 @@ async function main(): Promise<void> {
 	}
 }
 
-void main().catch((error) => {
-	process.stderr.write(`${error instanceof Error ? error.message : "Pi Hub web failed"}\n`);
+void main().catch(async (error) => {
+	const message = error instanceof Error ? error.message : "Pi Hub web failed";
+	if (process.argv[2] === "--serve" && process.argv[3]) {
+		await logHubLifecycle(dirname(process.argv[3]), `failed: ${message}`).catch(() => {});
+	} else process.stderr.write(`${message}\n`);
 	process.exit(1);
 });

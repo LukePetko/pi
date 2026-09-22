@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ensureHubWeb, stopHubWeb } from "./lib/pi-hub-web-launcher.ts";
+import { startHubWeb, stopHubWeb } from "./lib/pi-hub-web-launcher.ts";
 
 export default function piHubWeb(pi: ExtensionAPI): void {
 	pi.registerCommand("hub-web", {
@@ -16,10 +16,10 @@ export default function piHubWeb(pi: ExtensionAPI): void {
 			try {
 				if (args.trim() === "stop") {
 					const stopped = await stopHubWeb();
-					ctx.ui.notify(stopped ? "Web Hub stopped" : "No responsive Web Hub is running", "info");
+					ctx.ui.notify(stopped ? "Web Hub stopped; automatic startup disabled" : "Web Hub is stopped; automatic startup disabled", "info");
 					return;
 				}
-				const endpoint = await ensureHubWeb();
+				const endpoint = await startHubWeb();
 				// Fragment credentials never enter HTTP request URLs or the transcript.
 				const url = `${endpoint.origin}/#${endpoint.token}`;
 				const result = await pi.exec(process.platform === "darwin" ? "open" : "xdg-open", [url], { timeout: 5_000 });
