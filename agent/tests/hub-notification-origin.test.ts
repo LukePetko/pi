@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, realpath } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, rm, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -53,3 +53,61 @@ test("origin authority checks pid/birth/UID, fresh roster/gate and per-origin no
 	await assert.rejects(authority.action(origin, ticket.id, "accept"), /gate/);
 	born = "reused"; await assert.rejects(authority.action(origin, undefined, "show"), /replaced/);
 });
+
+for (const action of ["accept", "reject"] as const) {
+	for (const revocation of ["current", "signal", "both", "in-flight"] as const) {
+		test(`origin ${action} forwarding fences ${revocation} revocation across real manifest I/O`, async (t) => {
+			const directory = await mkdtemp("/tmp/pi-notice-decision-fence-");
+			t.after(() => rm(directory, { recursive: true, force: true }));
+			const origin = {
+				pid: 4321, birth: "birth", session: "sdk", generation: randomUUID(),
+				sequence: "1", bindingSequence: "1",
+				broker: { id: "pi", startedAt: 1, endpointEpoch: "epoch" },
+			};
+			const requestId = randomUUID();
+			const token = "a".repeat(64);
+			const key = createHash("sha256").update(JSON.stringify(["pi", origin.pid])).digest("hex");
+			await writeFile(join(directory, `${key}.json`), JSON.stringify({
+				version: 1, id: "pi", pid: origin.pid, updatedAt: Date.now(),
+				origin: "http://127.0.0.1:12345", token, pending: [{ id: requestId, title: "Preview" }],
+			}));
+			const controller = new AbortController();
+			let current = true, checks = 0, inspections = 0, decisions = 0;
+			t.mock.method(globalThis, "fetch", async (url, init) => {
+				assert.equal(init.headers.Authorization, `Bearer ${token}`);
+				assert.equal(JSON.parse(init.body).requestId, requestId);
+				if (String(url).endsWith("/inspect")) {
+					inspections++;
+					return Response.json({ permission: { id: requestId } });
+				}
+				assert.ok(String(url).endsWith("/decision"));
+				decisions++;
+				assert.equal(JSON.parse(init.body).decision, action === "accept" ? "once" : "reject");
+				assert.equal(init.signal.aborted, false);
+				assert.notEqual(init.signal, controller.signal, "caller cancellation is combined with the forwarding timeout");
+				controller.abort();
+				assert.equal(init.signal.aborted, true, "in-flight fetch receives caller cancellation");
+				throw init.signal.reason;
+			});
+			const authority = notificationOriginAuthority({
+				snapshot: () => ({ connected: true, sessions: [] }), subscribe: () => () => {},
+				resolveSession: async () => ({ ...origin.broker, pid: origin.pid }) as any,
+			}, directory, {
+				run: async (_command, args) => args.includes("lstart=") ? origin.birth : String(process.getuid?.()),
+				focus: async () => { assert.fail("decision must not focus"); },
+			});
+			await assert.rejects(authority.action(origin, requestId, action, () => {
+				checks++;
+				if (checks === 1 && revocation !== "in-flight") queueMicrotask(() => {
+					// The first authority check passes, then forwarding awaits the real manifest read.
+					if (revocation !== "signal") current = false;
+					if (revocation !== "current") controller.abort();
+				});
+				return current;
+			}, controller.signal), (error: any) => error.status === (revocation === "in-flight" ? 503 : 409));
+			assert.equal(inspections, 1);
+			assert.equal(checks, 2, "forwarding rechecks after manifest I/O");
+			assert.equal(decisions, revocation === "in-flight" ? 1 : 0);
+		});
+	}
+}

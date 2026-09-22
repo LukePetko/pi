@@ -116,17 +116,26 @@ export class PermissionUnavailable extends Error {
 	constructor(status: number, message: string) { super(message); this.status = status; }
 }
 
-async function forwardPermission(session: PermissionIdentity, action: PermissionAction, route: string, directory: string) {
+export interface PermissionActionFence {
+	current: () => boolean;
+	signal: AbortSignal;
+}
+
+async function forwardPermission(session: PermissionIdentity, action: PermissionAction, route: string, directory: string, fence?: PermissionActionFence) {
 	const manifest = await readManifest(directory, session);
 	if (!manifest?.pending.some((item) => item.id === action.requestId)) {
 		throw new PermissionUnavailable(409, "Permission request is no longer pending.");
 	}
+	const timeout = AbortSignal.timeout(3000);
+	const signal = fence ? AbortSignal.any([fence.signal, timeout]) : timeout;
+	if (fence && (!fence.current() || signal.aborted))
+		throw new PermissionUnavailable(409, "Native action revoked");
 	let response: Response;
 	try {
 		response = await fetch(`${manifest.origin}/${route}`, {
 			method: "POST",
 			headers: { Authorization: `Bearer ${manifest.token}`, "Content-Type": "application/json" },
-			body: JSON.stringify(action), signal: AbortSignal.timeout(3000), redirect: "error",
+			body: JSON.stringify(action), signal, redirect: "error",
 		});
 	} catch { throw new PermissionUnavailable(503, "Permission owner is unavailable. Use its terminal."); }
 	if (!response.ok) {
@@ -141,8 +150,8 @@ export async function inspectPermission(session: PermissionIdentity, requestId: 
 	return result.permission as PermissionRequest;
 }
 
-export async function decidePermission(session: PermissionIdentity, requestId: string, decision: PermissionDecision, directory = permissionDirectory()): Promise<void> {
-	await forwardPermission(session, { id: session.id, requestId, decision }, "decision", directory);
+export async function decidePermission(session: PermissionIdentity, requestId: string, decision: PermissionDecision, directory = permissionDirectory(), fence?: PermissionActionFence): Promise<void> {
+	await forwardPermission(session, { id: session.id, requestId, decision }, "decision", directory, fence);
 }
 
 /** In-memory owner of live decisions. The HTTP bridge never grants persistent approvals. */

@@ -76,7 +76,7 @@ export function notificationOriginAuthority(source: HubSource, directory: string
 			if (action === "show") { await dependencies.focus(origin, signal); return; }
 			if (!requestId || !origin.broker) throw new NotificationError(409, "Show-only notification");
 			// Roster registration time is not the independent gate owner's lifetime.
-			await decidePermission({ id: origin.broker.id, pid: origin.pid }, requestId, action === "accept" ? "once" : "reject", directory);
+			await decidePermission({ id: origin.broker.id, pid: origin.pid }, requestId, action === "accept" ? "once" : "reject", directory, { current, signal });
 		},
 	};
 }
