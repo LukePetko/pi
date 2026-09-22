@@ -111,3 +111,53 @@ for (const action of ["accept", "reject"] as const) {
 		});
 	}
 }
+
+test("runtime liveness requires confirmed process death/replacement, never broker/gate/tmux or malformed probes", async (t) => {
+	const birth = "Mon Sep 21 12:00:00 2026";
+	const origin = {
+		pid: 4321, birth, session: "sdk", generation: randomUUID(), sequence: "1", bindingSequence: "1",
+		broker: { id: "pi", startedAt: 1, endpointEpoch: "old" }, tmuxSocket: "/missing.sock",
+	};
+	let killError: string | undefined, probeError = false, observedBirth = birth, uid = String(process.getuid?.());
+	t.mock.method(process, "kill", (pid, signal) => {
+		assert.equal(pid, origin.pid);
+		assert.equal(signal, 0);
+		if (killError) throw Object.assign(new Error("probe"), { code: killError });
+		return true;
+	});
+	const authority = notificationOriginAuthority({
+		snapshot: () => { assert.fail("liveness must not depend on broker"); },
+		subscribe: () => () => {}, resolveSession: async () => { assert.fail("liveness must not inspect gates"); },
+	}, "/missing-permissions", {
+		run: async (_command, args) => {
+			if (probeError) throw new Error("temporary ps failure");
+			return args.includes("lstart=") ? observedBirth : uid;
+		},
+		focus: async () => { assert.fail("liveness cannot focus"); },
+	});
+	assert.equal(await authority.runtimeLiveness(origin), "live");
+	killError = "ESRCH";
+	assert.equal(await authority.runtimeLiveness(origin), "dead");
+	for (const code of ["EPERM", "EIO"]) {
+		killError = code;
+		assert.equal(await authority.runtimeLiveness(origin), "unknown");
+	}
+	killError = undefined;
+	probeError = true;
+	assert.equal(await authority.runtimeLiveness(origin), "unknown");
+	probeError = false;
+	for (const invalid of ["", "nonsense", "1"]) {
+		observedBirth = invalid;
+		assert.equal(await authority.runtimeLiveness(origin), "unknown");
+	}
+	observedBirth = birth;
+	for (const invalid of ["", "nonsense", "-1", "9007199254740992"]) {
+		uid = invalid;
+		assert.equal(await authority.runtimeLiveness(origin), "unknown");
+	}
+	uid = String(Number(process.getuid?.()) + 1);
+	assert.equal(await authority.runtimeLiveness(origin), "dead");
+	uid = String(process.getuid?.());
+	observedBirth = "Tue Sep 22 12:00:00 2026";
+	assert.equal(await authority.runtimeLiveness(origin), "dead");
+});

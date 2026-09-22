@@ -26,7 +26,7 @@ async function harness(t, extra = {}) {
 			await hub.close(); await hub.drain(); await writeFile(file, saved); ids.forEach(id => visible.add(id));
 			hub = await openHubNotifications(options);
 		},
-		async ledger(): Promise<{ notices: HubNotice[] }> { return JSON.parse(await readFile(file, "utf8")); },
+		async ledger(): Promise<{ notices: HubNotice[]; runtimes: { origin: NotificationOrigin; ended: boolean; updated: number }[] }> { return JSON.parse(await readFile(file, "utf8")); },
 	};
 }
 test("Hub accepts once before delivery, lost-response retries and restart do not replay; stored state cannot approve", async t => {
@@ -212,4 +212,186 @@ test("durable close seals old writer authority: late removal/poll and duplicate 
 	removed.resolve(); listed.resolve(); await poll; await draining; await old.close();
 	assert.equal(await readFile(file, "utf8"), accepted, "late old snapshots must never replace the new instance's accepted notice");
 	assert.equal(drained, true);
+});
+
+test("zero-notice crashed runtimes retire durably, fence retries through retention/restart, then release capacity", async (t) => {
+	let now = 1000;
+	const dead = new Set<number>();
+	const probes: number[] = [];
+	const h = await harness(t, {
+		limit: 2, now: () => now,
+		authority: {
+			async validate() {}, async focused() { return false; }, async action() {},
+			async runtimeLiveness(o) { probes.push(o.pid); return dead.has(o.pid) ? "dead" : "live"; },
+		},
+	});
+	const a = origin(101), b = origin(102), c = origin(103);
+	await h.hub.register(a);
+	await h.hub.register(b);
+	// No shutdown event was recorded; restored disk-only runtimes must be probed too.
+	await h.restart();
+	dead.add(a.pid); dead.add(b.pid);
+	now += 2 * 86400000;
+	await h.hub.poll();
+	assert.deepEqual(probes, [a.pid, b.pid]);
+	assert.ok((await h.ledger()).runtimes.every((r) => r.ended && r.updated === now));
+	await assert.rejects(h.hub.register(c), /capacity/);
+	await h.restart();
+	await assert.rejects(h.hub.register(a), /Stale/);
+	await assert.rejects(h.hub.event(event(a)), /inactive/);
+	now += 86400000 - 1;
+	await h.hub.poll();
+	await assert.rejects(h.hub.register(c), /capacity/);
+	now += 2;
+	await h.hub.poll();
+	assert.equal((await h.ledger()).runtimes.length, 0);
+	await h.restart();
+	await h.hub.register(c);
+	assert.deepEqual((await h.ledger()).runtimes.map((r) => r.origin.pid), [c.pid]);
+});
+
+test("runtime scans retain unknown/live actionable owners; resolved gates and generic 409s cannot retire runtimes", async (t) => {
+	let now = 1000, failure: Error | undefined;
+	const h = await harness(t, {
+		now: () => now,
+		authority: {
+			async validate(_o, requestId) { if (failure && requestId) throw failure; },
+			async focused() { return false; }, async action() {},
+			async runtimeLiveness(o) {
+				if (o.pid === 102) return "unknown";
+				if (o.pid === 103) throw new NotificationError(409, "temporary probe failure");
+				return "live";
+			},
+		},
+	});
+	const owners = [origin(101), origin(102), origin(103)];
+	for (const o of owners) {
+		await h.hub.register(o);
+		await h.hub.event(event(o, "permission-requested", { requestId: randomUUID(), title: "Preview" }));
+	}
+	await h.hub.drain();
+	now += 2 * 86400000;
+	failure = new NotificationError(503, "Broker disconnected");
+	await h.hub.poll();
+	assert.ok((await h.ledger()).notices.every((n) => n.state === "live" && n.capability));
+	failure = new NotificationError(409, "Gate resolved");
+	await h.hub.poll();
+	assert.ok((await h.ledger()).notices.every((n) => n.state === "terminal"));
+	assert.equal((await h.ledger()).runtimes.length, 3);
+	assert.ok((await h.ledger()).runtimes.every((r) => !r.ended));
+	failure = undefined;
+	await h.hub.event(event(owners[0]));
+	await h.hub.drain();
+	assert.equal((await h.ledger()).notices.at(-1)?.state, "live");
+});
+
+test("runtime probes are bounded/non-overlapping and progress independently of blocked notice enumeration", async (t) => {
+	const listed = deferred(), listing = deferred(), probes = deferred(), entered = deferred();
+	t.after(() => { listed.resolve(); probes.resolve(); });
+	let holdList = false, holdProbes = false, active = 0, maximum = 0, calls = 0, dead = false;
+	const h = await harness(t, {
+		sender: {
+			async show() {}, async remove() {},
+			async list() { if (holdList) { listing.resolve(); await listed.promise; } return []; },
+		},
+		authority: {
+			async validate() {}, async focused() { return false; }, async action() {},
+			async runtimeLiveness() {
+				calls++; active++; maximum = Math.max(maximum, active);
+				if (active === 4) entered.resolve();
+				if (holdProbes) await probes.promise;
+				active--;
+				return dead ? "dead" : "live";
+			},
+		},
+	});
+	const owners = Array.from({ length: 9 }, (_, i) => origin(101 + i));
+	for (const o of owners) await h.hub.register(o);
+	await h.hub.event(event(owners[0]));
+	await h.hub.drain();
+	holdList = true; holdProbes = true;
+	const first = h.hub.poll();
+	await Promise.all([listing.promise, entered.promise]);
+	await promptly(h.hub.poll());
+	assert.equal(calls, 4, "overlapping tick must not add probes");
+	probes.resolve();
+	while (calls < 9 || active) await new Promise((r) => setImmediate(r));
+	// A live-only scan has no durable mutations; let its final transaction settle.
+	await new Promise((r) => setImmediate(r));
+	dead = true; holdProbes = false;
+	await promptly(h.hub.poll());
+	assert.equal(calls, 18);
+	assert.equal(maximum, 4);
+	assert.ok((await h.ledger()).runtimes.every((r) => r.ended));
+	assert.ok((await h.ledger()).notices.every((n) => n.state === "terminal" && !n.capability));
+	listed.resolve();
+	await first;
+});
+
+for (const change of ["replacement", "rebind", "close"] as const) {
+	test(`late runtime death result cannot retire ${change} identity or overwrite sealed close`, async (t) => {
+		const entered = deferred(), blocked = deferred();
+		t.after(blocked.resolve);
+		let hold = true;
+		const h = await harness(t, {
+			authority: {
+				async validate() {}, async focused() { return false; }, async action() {},
+				async runtimeLiveness() { entered.resolve(); if (hold) await blocked.promise; return "dead"; },
+			},
+		});
+		const o = origin();
+		await h.hub.register(o);
+		await h.hub.event(event(o, "permission-requested", { requestId: randomUUID(), title: "Preview" }));
+		await h.hub.drain();
+		const poll = h.hub.poll();
+		await entered.promise;
+		let next = o;
+		if (change === "close") await promptly(h.hub.close());
+		else {
+			next = change === "replacement" ? { ...o, sequence: "2", generation: randomUUID() }
+				: { ...o, bindingSequence: "2", broker: { ...o.broker!, endpointEpoch: "new" } };
+			await promptly(h.hub.register(next));
+			await assert.rejects(h.hub.register(o), /Stale/);
+		}
+		const saved = await readFile(h.file, "utf8");
+		if (change === "close") await writeFile(h.file, "replacement daemon owns this file");
+		hold = false; blocked.resolve();
+		await poll;
+		if (change === "close") {
+			assert.equal(await readFile(h.file, "utf8"), "replacement daemon owns this file");
+			await writeFile(h.file, saved);
+		} else {
+			assert.ok((await h.ledger()).runtimes.some((r) => r.origin.generation === next.generation && !r.ended));
+			if (change === "rebind") assert.equal((await h.ledger()).notices[0].state, "live");
+		}
+	});
+}
+
+test("confirmed runtime death revokes an in-flight action and its capability without waiting for authority", async (t) => {
+	const entered = deferred(), blocked = deferred();
+	t.after(blocked.resolve);
+	const h = await harness(t, {
+		authority: {
+			async validate() {}, async focused() { return false; },
+			async runtimeLiveness() { return "dead"; },
+			async action(_o, _id, _action, current, signal) {
+				entered.resolve(); await blocked.promise;
+				assert.equal(signal.aborted, true);
+				assert.equal(current(), false);
+				throw new NotificationError(409, "revoked");
+			},
+		},
+	});
+	const o = origin();
+	await h.hub.register(o);
+	await h.hub.event(event(o));
+	await h.hub.drain();
+	const n = structuredClone(h.sent[0]);
+	const acting = h.hub.action({ id: n.id, capability: n.capability, action: "show" });
+	await entered.promise;
+	await promptly(h.hub.poll());
+	assert.equal((await h.ledger()).runtimes[0].ended, true);
+	assert.equal((await h.ledger()).notices[0].capability, "");
+	blocked.resolve();
+	await assert.rejects(acting, /revoked/);
 });

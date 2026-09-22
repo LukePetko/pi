@@ -25,6 +25,7 @@ export interface NotificationSender {
 	list(notices: HubNotice[]): Promise<string[]>;
 }
 export interface NotificationAuthority {
+	runtimeLiveness?(origin: NotificationOrigin): Promise<"live" | "dead" | "unknown">;
 	validate(origin: NotificationOrigin, requestId?: string): Promise<void>;
 	focused(origin: NotificationOrigin): Promise<boolean>;
 	action(origin: NotificationOrigin, requestId: string | undefined, action: "show" | "accept" | "reject", current: () => boolean, signal: AbortSignal): Promise<void>;
@@ -267,8 +268,43 @@ export async function openHubNotifications(options: {
 			});
 		} finally { if (actions.get(n.id) === controller) actions.delete(n.id); }
 	}
+	let reconcilingRuntimes = false;
+	async function reconcileRuntimes() {
+		if (stopped || reconcilingRuntimes || !authority.runtimeLiveness) return;
+		reconcilingRuntimes = true;
+		try {
+			const pending = ledger.runtimes.filter((r) => !r.ended);
+			async function check(r: Runtime) {
+				const origin = r.origin;
+				let status: "live" | "dead" | "unknown";
+				try {
+					status = await authority.runtimeLiveness!(origin);
+				} catch {
+					return; // A failed probe is unknown, never death.
+				}
+				if (status !== "dead") return;
+				await transaction(async () => {
+					if (stopped || r.ended || findRuntime(origin.generation) !== r || r.origin !== origin) return;
+					r.ended = true;
+					r.updated = now(); // Keep replay fencing for a full horizon after confirmation.
+					active.delete(origin.generation);
+					await terminate(ledger.notices.filter((n) => n.generation === origin.generation && n.state === "live"));
+				});
+			}
+			for (let i = 0; i < pending.length && !stopped; i += 4)
+				await Promise.all(pending.slice(i, i + 4).map(check));
+			await transaction(async () => {
+				if (stopped) return;
+				const runtimes = ledger.runtimes.length, notices = ledger.notices.length;
+				compact();
+				if (runtimes !== ledger.runtimes.length || notices !== ledger.notices.length) await persist();
+			});
+		} finally {
+			reconcilingRuntimes = false;
+		}
+	}
 	let polling = false;
-	async function poll() {
+	async function pollNotices() {
 		if (stopped || polling) return;
 		polling = true;
 		try {
@@ -299,6 +335,10 @@ export async function openHubNotifications(options: {
 			}
 			for (let i = 0; i < pending.length && !stopped; i += 4) await Promise.all(pending.slice(i, i + 4).map(check));
 		} finally { polling = false; }
+	}
+	async function poll() {
+		// Each lane is non-overlapping; a blocked OS list cannot stall process retirement.
+		await Promise.all([reconcileRuntimes(), pollNotices()]);
 	}
 	// Boot reconciliation never re-adds a notice. Kept capabilities remain inert until
 	// fresh registration; terminal cleanup does not hold startup on an OS operation.

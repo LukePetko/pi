@@ -24,7 +24,15 @@ export function originCommand(origin: NotificationOrigin, command: string, args:
 async function run(command: string, args: string[]): Promise<string> {
 	return (await execute(command, args, { timeout: 1500, maxBuffer: 1024 * 1024, env: { PATH: "/usr/bin:/bin" } })).stdout.trim();
 }
-export function notificationOriginAuthority(source: HubSource, directory: string, dependencies = {
+function processExists(pid: number): boolean | undefined {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error: any) {
+		return error.code === "ESRCH" ? false : undefined;
+	}
+}
+export function notificationOriginAuthority(source: HubSource, directory: string, dependencies: { run: typeof run; focus: typeof focusNotificationOrigin; processExists?: typeof processExists } = {
 	run, focus: focusNotificationOrigin,
 }) {
 	function originRun(origin: NotificationOrigin) {
@@ -69,6 +77,26 @@ export function notificationOriginAuthority(source: HubSource, directory: string
 	}
 	return {
 		validate,
+		async runtimeLiveness(origin: NotificationOrigin): Promise<"live" | "dead" | "unknown"> {
+			// Broker, gate and tmux failures are not evidence of process death.
+			try {
+				const exists = (dependencies.processExists ?? processExists)(origin.pid);
+				if (exists === false) return "dead";
+				if (exists !== true) return "unknown";
+				const [birthValue, uidValue] = await Promise.all([
+					dependencies.run("/bin/ps", ["-p", String(origin.pid), "-o", "lstart="]),
+					dependencies.run("/bin/ps", ["-p", String(origin.pid), "-o", "uid="]),
+				]);
+				const birth = birthValue.trim(), uid = uidValue.trim();
+				if (!/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(birth) ||
+					!Number.isFinite(Date.parse(birth)) || !/^\d+$/.test(uid) ||
+					!Number.isSafeInteger(Number(uid)) || process.getuid?.() === undefined)
+					return "unknown";
+				return birth === origin.birth && Number(uid) === process.getuid?.() ? "live" : "dead";
+			} catch {
+				return "unknown";
+			}
+		},
 		focused: (origin: NotificationOrigin) => isPiSessionFocused(origin.pid, originRun(origin)),
 		async action(origin: NotificationOrigin, requestId: string | undefined, action: "show" | "accept" | "reject", current = () => true, signal = new AbortController().signal) {
 			await validate(origin, requestId);
