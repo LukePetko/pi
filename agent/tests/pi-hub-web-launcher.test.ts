@@ -36,7 +36,7 @@ test("endpoint discovery rejects malformed data and non-loopback addresses", asy
 test("concurrent launchers reuse one detached server; real scoped Intercom updates reach SSE", { timeout: 40_000 }, async (t) => {
 	// Darwin Unix sockets have a short path limit; nested harness TMPDIRs exceed it.
 	const dir = await mkdtemp("/tmp/hub-runtime-");
-	const env = { ...process.env, PI_CODING_AGENT_DIR: dir, PI_INTERCOM_SCOPE_ID: "hub-test" };
+	const env = { ...process.env, PI_CODING_AGENT_DIR: dir, PI_INTERCOM_SCOPE_ID: "hub-test", PI_HUB_PORT: "0" };
 	const stateDir = hubStateDir(env);
 	let peer;
 	let endpoint;

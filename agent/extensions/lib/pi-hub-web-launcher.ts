@@ -20,6 +20,13 @@ export interface HubEndpoint {
 	capabilities?: string[];
 }
 
+export function hubPort(env: NodeJS.ProcessEnv = process.env): number {
+	const value = env.PI_HUB_PORT ?? "47831";
+	if (!/^\d{1,5}$/.test(value) || Number(value) > 65535)
+		throw new Error("PI_HUB_PORT must be an integer between 0 and 65535");
+	return Number(value);
+}
+
 export function hubStateDir(env: NodeJS.ProcessEnv = process.env): string {
 	const agentDir = resolve(env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
 	const scope = env.PI_INTERCOM_SCOPE_ID?.trim() ?? "";

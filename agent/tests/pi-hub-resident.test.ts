@@ -41,7 +41,7 @@ syncBuiltinESMExports();
 `);
 		const runtime = hubRuntimeCommand();
 		const child = spawn(runtime.command, ["--import", hook, ...runtime.args, "--serve", endpointFile], {
-			env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_INTERCOM_SCOPE_ID: "startup-stop" },
+			env: { ...process.env, PI_CODING_AGENT_DIR: directory, PI_INTERCOM_SCOPE_ID: "startup-stop", PI_HUB_PORT: "0" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		const exited = once(child, "exit");
@@ -70,7 +70,7 @@ const launcher = pathToFileURL(resolve("agent/extensions/lib/pi-hub-web-launcher
 
 async function fixture(t) {
 	const dir = await mkdtemp("/tmp/hub-resident-");
-	const env = { ...process.env, PI_CODING_AGENT_DIR: dir, PI_INTERCOM_SCOPE_ID: "resident-test" };
+	const env = { ...process.env, PI_CODING_AGENT_DIR: dir, PI_INTERCOM_SCOPE_ID: "resident-test", PI_HUB_PORT: "0" };
 	const state = hubStateDir(env);
 	t.after(async () => {
 		await stopHubWeb(state).catch(() => {});

@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { HUB_CAPABILITIES, hubRuntimeCommand, readEndpoint } from "./pi-hub-web-launcher.ts";
+import { HUB_CAPABILITIES, hubPort, hubRuntimeCommand, readEndpoint } from "./pi-hub-web-launcher.ts";
 import { atomicPrivateJson, logHubLifecycle, readControl, withHubControl, writeDesired } from "./pi-hub-service-control.ts";
 import { focusPiSession } from "./pi-hub-navigation.ts";
 import { startHubServer } from "./pi-hub-web-server.ts";
@@ -27,6 +27,7 @@ async function focusInWorker(pid: number, signal: AbortSignal): Promise<void> {
 }
 
 async function serve(endpointFile: string): Promise<void> {
+	const port = hubPort();
 	const token = randomBytes(32).toString("hex");
 	const instance = randomUUID();
 	const stateDir = dirname(endpointFile);
@@ -74,6 +75,7 @@ async function serve(endpointFile: string): Promise<void> {
 		});
 		if (stopping) return;
 		server = await startHubServer({
+			port,
 			notifications,
 			source: withHubTodos(source), token, instance, capabilities: HUB_CAPABILITIES, lifetime: "resident",
 			stateFile: join(stateDir, "session.json"),

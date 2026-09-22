@@ -28,6 +28,8 @@ export interface HubSource {
 }
 
 export interface HubServerOptions {
+	/** Embedded/test servers default to an ephemeral port; the resident entry point selects its fixed port. */
+	port?: number;
 	notifications?: {
 		register(value: unknown): Promise<unknown>;
 		event(value: unknown): Promise<unknown>;
@@ -383,7 +385,7 @@ export async function startHubServer(options: HubServerOptions) {
 	server.maxHeadersCount = 30;
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
-		server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+		server.listen(options.port ?? 0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
 	});
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("No Hub TCP address");

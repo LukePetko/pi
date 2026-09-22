@@ -27,7 +27,7 @@ and the [v2 specification](hub-web-v2-spec.md).
 
 One detached Node process serves the dashboard for each agent directory and
 `PI_INTERCOM_SCOPE_ID`. Launches are serialized with a short-lived filesystem lock.
-The bridge listens on a random `127.0.0.1` port; authenticated discovery lets other
+The bridge listens on `http://127.0.0.1:47831` by default; authenticated discovery lets other
 Pi instances reuse it. It survives the launching Pi instance exiting or reloading.
 
 The service is **resident**: it stays running with no browser, no Pi sessions, or
@@ -47,6 +47,10 @@ node --experimental-strip-types agent/hub.ts status
 node --experimental-strip-types agent/hub.ts open
 node --experimental-strip-types agent/hub.ts stop
 ```
+
+Set `PI_HUB_PORT` to override the port for another scope, or `0` to explicitly
+request an ephemeral test port. Restart an existing service to apply a port change.
+A busy port fails startup rather than silently selecting another address.
 
 The executable `agent/hub.ts` also works directly when Node is on PATH. Set
 `PI_CODING_AGENT_DIR` and `PI_INTERCOM_SCOPE_ID` consistently to select a scope.
