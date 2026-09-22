@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, realpath } from "node:fs/promises";
+import { createServer } from "node:net";
+import { join } from "node:path";
+import { test } from "node:test";
+import { notificationOriginAuthority, originCommand } from "../extensions/lib/hub-notification-origin.ts";
+import { createPermissionBroker } from "../extensions/lib/hub-permissions.ts";
+
+test("origin authority checks pid/birth/UID, fresh roster/gate and per-origin nondefault tmux socket; focus never targets daemon PID", async t => {
+	const root = await realpath(await mkdtemp("/tmp/pi-notice-origin-"));
+	const socketPath = join(root, "nondefault.sock"); const socket = createServer(); await new Promise<void>(r => socket.listen(socketPath, r));
+	const directory = join(root, "permissions"); const broker = await createPermissionBroker(directory);
+	t.after(async () => { await broker.close(); await new Promise<void>(r => socket.close(() => r())); await rm(root, { recursive: true, force: true }); });
+	const calls: any[] = []; const pid = 4321; let uid = process.getuid?.(); let born = "birth";
+	const run = async (command: string, args: string[]) => {
+		calls.push({ command, args });
+		if (args.includes("lstart=")) return born;
+		if (args.includes("uid=")) return String(uid);
+		if (args.includes("-axo")) return `${pid} 1\n9876 1`;
+		if (args.includes("list-panes")) return `origin\t@32\t%32\t${pid}`;
+		if (args.includes("list-clients")) return "client\t9876\torigin\t10";
+		if (args.includes("list-windows")) return "88\twork\tGhostty";
+		return "";
+	};
+	let epoch = "epoch"; let connected = true; let rosterPid = pid; let rosterStartedAt = 1;
+	const source = { snapshot: () => ({ connected, sessions: [] }), subscribe: () => () => {}, resolveSession: async () => ({ id: "pi", pid: rosterPid, startedAt: rosterStartedAt, endpointEpoch: epoch } as any) };
+	const focused: any[] = [];
+	const authority = notificationOriginAuthority(source, directory, { run, focus: async (origin, signal) => { assert.equal(signal.aborted, false); focused.push(origin); } });
+	const origin = { pid, birth: "birth", session: "sdk", generation: randomUUID(), sequence: "1", bindingSequence: "1", tmuxSocket: socketPath, broker: { id: "pi", startedAt: 1, endpointEpoch: "epoch" } };
+	await authority.validate(origin);
+	assert.deepEqual(originCommand(origin, "tmux", ["list-panes"]).args, ["-S", socketPath, "list-panes"]);
+	assert.ok(originCommand(origin, "tmux", []).executable.startsWith("/"));
+	await assert.rejects(authority.validate({ ...origin, birth: "old" }), /replaced/);
+	uid = Number(uid) + 1; await assert.rejects(authority.validate(origin), /replaced/); uid = process.getuid?.();
+	epoch = "new"; await assert.rejects(authority.validate(origin), error => error.status === 425); epoch = "epoch";
+	rosterPid++; await assert.rejects(authority.validate(origin), /replaced/); rosterPid = pid;
+	connected = false; await assert.rejects(authority.validate(origin), error => error.status === 503); connected = true;
+	await assert.rejects(authority.validate({ ...origin, tmuxSocket: join(root, "missing.sock") }), /socket/);
+	await assert.rejects(authority.validate(origin, randomUUID()), /gate/);
+	const decisions: string[] = [];
+	const ticket = broker.request({ id: "pi", pid }, { cwd: "/work", title: "Harmless preview", description: "No tool executes" }, d => decisions.push(d)); await ticket.ready;
+	await authority.validate(origin, ticket.id);
+	// A fresh roster registration is not the creation time of the still-live gate.
+	rosterStartedAt = Date.now() + 60000; origin.broker.startedAt = rosterStartedAt;
+	await authority.validate(origin, ticket.id);
+	await authority.action(origin, ticket.id, "show");
+	assert.equal(decisions.length, 0);
+	assert.equal(focused[0].pid, pid); assert.notEqual(focused[0].pid, process.pid);
+	assert.equal(focused[0].tmuxSocket, socketPath);
+	assert.ok(calls.filter(c => c.args.includes("list-panes")).every(c => c.args[0] === "-S" && c.args[1] === socketPath));
+	await authority.action(origin, ticket.id, "accept"); assert.deepEqual(decisions, ["once"]);
+	await assert.rejects(authority.action(origin, ticket.id, "accept"), /gate/);
+	born = "reused"; await assert.rejects(authority.action(origin, undefined, "show"), /replaced/);
+});

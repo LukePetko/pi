@@ -28,6 +28,12 @@ export interface HubSource {
 }
 
 export interface HubServerOptions {
+	notifications?: {
+		register(value: unknown): Promise<unknown>;
+		event(value: unknown): Promise<unknown>;
+		action(value: unknown): Promise<unknown>;
+		close(): Promise<void>;
+	};
 	token: string;
 	source: HubSource;
 	focus: (pid: number) => Promise<void>;
@@ -291,6 +297,32 @@ export async function startHubServer(options: HubServerOptions) {
 			res.end(asset.content);
 			return;
 		}
+		if (route.startsWith("/api/v1/notifications/")) {
+			// Producer/native routes are not browser APIs, even for same-origin pages.
+			if (req.headers.origin || req.headers["sec-fetch-site"] && req.headers["sec-fetch-site"] !== "none") {
+				reply(res, 403, { error: "Local notification clients only" }); return;
+			}
+			const operation = route.slice("/api/v1/notifications/".length);
+			if (!options.notifications || req.method !== "POST" || !["register", "event", "action"].includes(operation) || req.headers["content-type"] !== "application/json") {
+				reply(res, 404, { error: "Notification API unavailable" }); return;
+			}
+			if (operation !== "action" && !authorized(req, token)) {
+				reply(res, 401, { error: "Notification credential required" }); return;
+			}
+			try {
+				let body = "";
+				for await (const chunk of req) {
+					body += chunk.toString();
+					if (Buffer.byteLength(body) > 8192) {
+						reply(res, 413, { error: "Notification request too large" }); return;
+					}
+				}
+				const value = JSON.parse(body);
+				const result = await options.notifications[operation as "register" | "event" | "action"](value);
+				res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(result));
+			} catch (error: any) { reply(res, error.status ?? 400, { error: error.status ? error.message : "Invalid notification request" }); }
+			return;
+		}
 		if (!authorized(req, token)) {
 			reply(res, 401, { error: "Open this dashboard using /hub-web in Pi" });
 			return;
@@ -375,6 +407,7 @@ export async function startHubServer(options: HubServerOptions) {
 		unsubscribe();
 		inspections.length = 0;
 		presentations.clear();
+		await options.notifications?.close();
 		await acknowledgements.flush();
 		for (const res of streams) res.end();
 		await new Promise<void>((resolve) => {

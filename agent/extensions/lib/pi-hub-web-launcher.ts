@@ -9,7 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isAlive, readControl, withHubControl, writeDesired } from "./pi-hub-service-control.ts";
 
-export const HUB_CAPABILITIES = ["resident-lifecycle-v1"];
+export const HUB_CAPABILITIES = ["resident-lifecycle-v1", "notifications-v1"];
 export interface HubEndpoint {
 	version: 1;
 	pid: number;

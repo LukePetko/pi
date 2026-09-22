@@ -17,6 +17,7 @@ struct Notice: Codable {
     let body: String
     let actionable: Bool
     let callback: Callback
+    let resident: Bool?
 }
 
 func validIdentifier(_ id: String) -> Bool {
@@ -40,8 +41,8 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
     func applicationWillFinishLaunching(_ notification: Notification) {
         center.delegate = self
         center.setNotificationCategories([
-            UNNotificationCategory(identifier: permissionCategory, actions: actions(), intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: showCategory, actions: [actions()[2]], intentIdentifiers: [], options: [])
+            UNNotificationCategory(identifier: permissionCategory, actions: actions(), intentIdentifiers: [], options: [.customDismissAction]),
+            UNNotificationCategory(identifier: showCategory, actions: [actions()[2]], intentIdentifiers: [], options: [.customDismissAction])
         ])
     }
 
@@ -145,9 +146,10 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         receivedAction = true
-        let action = response.actionIdentifier == UNNotificationDefaultActionIdentifier ? "show" : response.actionIdentifier
-        guard actionNames.contains(action), let id = response.notification.request.content.userInfo["id"] as? String,
-              let notice = try? readNotice(id), action == "show" || notice.actionable else {
+        let action = response.actionIdentifier == UNNotificationDismissActionIdentifier ? "dismiss" :
+            (response.actionIdentifier == UNNotificationDefaultActionIdentifier ? "show" : response.actionIdentifier)
+        guard actionNames.contains(action) || action == "dismiss", let id = response.notification.request.content.userInfo["id"] as? String,
+              let notice = try? readNotice(id), action == "show" || (action == "dismiss" ? notice.resident == true : notice.actionable) else {
             completionHandler(); finish(["ignored": true]); return
         }
         let task = Process()
@@ -160,9 +162,9 @@ final class Notifier: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
         task.terminationHandler = { process in
             completionHandler()
             // A failed/stale decision must never look like an approval; leave the local prompt intact.
-            if process.terminationStatus != 0, FileManager.default.fileExists(atPath: self.recordURL(id).path) {
+            if action != "dismiss", process.terminationStatus != 0, FileManager.default.fileExists(atPath: self.recordURL(id).path) {
                 let retry = Notice(title: "Permission still needed", body: "Action failed. Use Show to inspect the request.",
-                                   actionable: false, callback: notice.callback)
+                                   actionable: false, callback: notice.callback, resident: notice.resident)
                 self.deliver(id, notice: retry) { _ in self.finish(["error": "Action failed"], status: 1) }
             } else { self.finish(["action": action]) }
         }

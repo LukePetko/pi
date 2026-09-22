@@ -1,150 +1,92 @@
 import assert from "node:assert/strict";
-import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
-import fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
-import { setImmediate } from "node:timers/promises";
-import {
-	PERMISSION_REQUESTED,
-	PERMISSION_RESOLVED,
-} from "../extensions/lib/permission-notifications.ts";
+import macosNotify from "../extensions/macos-notify.ts";
+import { PERMISSION_REQUESTED, PERMISSION_RESOLVED } from "../extensions/lib/permission-notifications.ts";
 
-async function harness(t, customAppFails = false, isFocused = async () => false, sender?) {
-	const calls = [];
-	let shutdown = () => {};
-	t.mock.method(fs, "existsSync", () => true);
-	t.mock.method(fs, "readdirSync", () => []);
-	t.mock.method(fs, "realpathSync", () => "/tmp/notifier.app/Contents/MacOS/terminal-notifier");
-	t.mock.method(childProcess, "execFileSync", (command) => {
-		if (customAppFails && command.endsWith("/lsregister")) throw new Error("registration failed");
-		return command === "/bin/ps" ? "process birth stamp" : "";
+function harness(channel?) {
+	const handlers = new Map(); const commands = new Map(); const bus = new EventEmitter();
+	const clients: any[] = [];
+	if (channel) bus.on("intercom:extension-register", registration => registration.onReady(channel));
+	macosNotify({
+		on: (name, fn) => handlers.set(name, fn), registerCommand: (name, fn) => commands.set(name, fn),
+		events: { emit: (name, data) => bus.emit(name, data), on(name, fn) { bus.on(name, fn); return () => bus.off(name, fn); } },
+	} as any, {
+		birth: () => "birth",
+		client(options) { const events: any[] = []; const client = { send: e => events.push(e), flush: async () => {}, dispose() {} }; clients.push({ options, events }); return client; },
 	});
-	t.mock.method(childProcess, "execFile", (command, args, callback) => {
-		const call = { command, args, callback, stdinClosed: false };
-		calls.push(call);
-		return { stdin: { end() { call.stdinClosed = true; } } };
-	});
-	t.mock.method(console, "error", () => {});
-	syncBuiltinESMExports();
-	t.after(() => { shutdown(); t.mock.restoreAll(); syncBuiltinESMExports(); });
-	const extension = await import(`../extensions/macos-notify.ts?permissions=${customAppFails}`);
-	const bus = new EventEmitter();
-	const handlers = new Map();
-	const commands = new Map();
-	extension.default({
-		on: (name, handler) => handlers.set(name, handler),
-		registerCommand: (name, command) => commands.set(name, command),
-		events: {
-			on(name, handler) { bus.on(name, handler); return () => { bus.off(name, handler); }; },
-		},
-	}, sender ?? extension.legacyPermissionSender, isFocused);
-	shutdown = () => handlers.get("session_shutdown")();
-	assert.equal(calls.length, 0, "factory must not send notifications");
-	handlers.get("session_start")();
-	const request = async (id = "permission-a") => {
-		bus.emit(PERMISSION_REQUESTED, {
-			id,
-			cwd: "/work/my-project",
-			title: "Push another repository",
-		});
-		await setImmediate();
-	};
-	return { bus, calls, handlers, commands, request };
+	const ctx = { cwd: "/work/project", sessionManager: { getSessionId: () => "sdk-session" }, ui: { notify() {} } };
+	return { handlers, commands, bus, clients, ctx };
 }
-
-test("permission alerts use the persistent Pi sender and click action, then withdraw on resolution/shutdown", async (t) => {
-	const h = await harness(t);
-	await h.request();
-	assert.equal(h.calls.length, 1);
-	const sent = h.calls[0];
-	const value = (flag) => sent.args[sent.args.indexOf(flag) + 1];
-	assert.equal(value("-title"), "Permission needed");
-	assert.equal(value("-message"), "my-project · Push another repository");
-	assert.equal(value("-sender"), "works.earendil.pi-notifier.lukas");
-	assert.match(value("-execute"), /focusPiSession/);
-	assert.ok(sent.command.endsWith("/cache/Pi Notifier.app/Contents/MacOS/terminal-notifier"));
-	assert.equal(sent.args.includes("-timeout"), false);
-	const group = value("-group");
+test("macos-notify is event-only: permission resolution and agent_end are forwarded without OS execution", async () => {
+	const h = harness();
+	h.handlers.get("session_start")({}, h.ctx);
+	h.bus.emit(PERMISSION_REQUESTED, { id: "permission-a", cwd: h.ctx.cwd, title: "Harmless preview" });
 	h.bus.emit(PERMISSION_RESOLVED, { id: "permission-a" });
-	assert.equal(h.calls[1].command, sent.command);
-	assert.equal(h.calls[1].stdinClosed, true, "terminal-notifier -remove waits for stdin EOF");
-	assert.deepEqual(h.calls[1].args, ["-remove", group, "-sender", "works.earendil.pi-notifier.lukas"]);
-	sent.callback(null);
-	assert.deepEqual(h.calls[2].args, h.calls[1].args, "late delivery must be removed too");
-	await h.commands.get("notify-test").handler("", { cwd: "/work/my-project", ui: { notify() {} } });
-	await setImmediate();
-	const completionGroup = h.calls[3].args[h.calls[3].args.indexOf("-group") + 1];
-	assert.match(completionGroup, /^pi-completion:/);
-	assert.notEqual(completionGroup, group, "completion alerts remain independent");
-	await h.request("permission-b");
-	h.calls[4].callback(null);
+	h.handlers.get("agent_start")({}, h.ctx);
+	h.handlers.get("agent_end")({}, h.ctx);
+	await h.commands.get("notify-test").handler("", h.ctx);
 	h.handlers.get("session_shutdown")();
-	assert.equal(h.calls[5].args[0], "-remove");
+	assert.deepEqual(h.clients[0].events.map(e => e.kind), ["permission-requested", "permission-resolved", "completion", "completion", "session-ended"]);
+	assert.equal(new Set(h.clients[0].events.map(e => e.eventId)).size, 5);
+	assert.equal(h.clients[0].events[3].test, true);
 	assert.equal(h.bus.listenerCount(PERMISSION_REQUESTED), 0);
-	h.handlers.get("session_start")();
-	assert.equal(h.bus.listenerCount(PERMISSION_REQUESTED), 1);
+});
+test("macos-notify fences new SDK runtimes and excludes generic prompts", () => {
+	const h = harness();
+	h.handlers.get("session_start")({}, h.ctx);
+	h.handlers.get("ui_prompt_start")?.({}, h.ctx);
+	assert.equal(h.clients[0].events.length, 0);
+	h.handlers.get("session_start")({}, h.ctx);
+	h.handlers.get("agent_end")({}, h.ctx);
+	assert.equal(h.clients[0].events[0].kind, "session-ended");
+	assert.notEqual(h.clients[0].events[0].generation, h.clients[1].events[0].generation);
+	h.handlers.get("session_shutdown")();
+});
+test("macos-notify forwards broker identity only, never executable/environment/broker paths", async (t) => {
+	const old = process.env.PI_INTERCOM_SESSION_ID;
+	process.env.PI_INTERCOM_SESSION_ID = "broker-id";
+	t.after(() => { if (old === undefined) delete process.env.PI_INTERCOM_SESSION_ID; else process.env.PI_INTERCOM_SESSION_ID = old; });
+	const h = harness();
+	h.handlers.get("session_start")({}, h.ctx);
+	h.bus.emit(PERMISSION_REQUESTED, { id: "notice", cwd: h.ctx.cwd, title: "Preview", broker: { session: { id: "broker-id", pid: process.pid }, requestId: "request", directory: "/untrusted/path" } });
+	assert.equal(h.clients[0].events[0].requestId, "request");
+	assert.equal(JSON.stringify(h.clients[0].events).includes("untrusted"), false);
+	h.bus.emit(PERMISSION_REQUESTED, { id: "wrong", cwd: h.ctx.cwd, title: "Preview", broker: { session: { id: "different", pid: process.pid }, requestId: "request", directory: "/untrusted/path" } });
+	assert.equal(h.clients[0].events.length, 1);
 	h.handlers.get("session_shutdown")();
 });
 
-test("default-sender fallback remains removable and never creates unremovable AppleScript alerts", async (t) => {
-	const h = await harness(t, true);
-	await h.request();
-	const sent = h.calls[0];
-	assert.equal(sent.command, "terminal-notifier");
-	assert.equal(sent.args.includes("-sender"), false);
-	assert.ok(sent.args.includes("-execute"));
-	sent.callback(new Error("delivery failed"));
-	assert.equal(h.calls.length, 1, "permission delivery failure must not create a stale fallback alert");
-	h.bus.emit(PERMISSION_RESOLVED, { id: "permission-a" });
-	assert.equal(h.calls[1].command, "terminal-notifier");
-	assert.equal(h.calls[1].args[0], "-remove");
-	assert.equal(h.calls[1].args.includes("-sender"), false);
-	await h.commands.get("notify-test").handler("", { cwd: "/work/my-project", ui: { notify() {} } });
-	await setImmediate();
-	h.calls[2].callback(new Error("completion delivery failed"));
-	assert.equal(h.calls.length, 3, "completion failure must not create an unremovable fallback");
+test("quiet adapter rebind refreshes broker epoch without changing SDK runtime or publishing an event", async t => {
+	const old = process.env.PI_INTERCOM_SESSION_ID;
+	process.env.PI_INTERCOM_SESSION_ID = "broker-id";
+	t.after(() => { if (old === undefined) delete process.env.PI_INTERCOM_SESSION_ID; else process.env.PI_INTERCOM_SESSION_ID = old; });
+	let epoch = "epoch-a";
+	const h = harness({ snapshot: () => ({ connected: true }), listSessions: async () => [{ id: "broker-id", pid: process.pid, startedAt: 1, endpointEpoch: epoch }] });
+	h.handlers.get("session_start")({}, h.ctx);
+	const first = await h.clients[0].options.origin();
+	epoch = "epoch-b";
+	const second = await h.clients[0].options.origin();
+	assert.equal(second.generation, first.generation); assert.equal(second.sequence, first.sequence);
+	assert.equal(second.session, first.session); assert.equal(second.broker.endpointEpoch, "epoch-b");
+	assert.ok(BigInt(second.bindingSequence) > BigInt(first.bindingSequence));
+	assert.equal(first.broker.endpointEpoch, "epoch-a", "queued old snapshots cannot mutate into a new binding");
+	assert.equal(h.clients[0].events.length, 0);
 	h.handlers.get("session_shutdown")();
 });
 
-test("already-focused Pi suppresses permission and completion notifications without resolving permissions", async (t) => {
-	const h = await harness(t, false, async () => true);
-	let resolutions = 0;
-	h.bus.on(PERMISSION_RESOLVED, () => { resolutions++; });
-	await h.request();
-	await h.commands.get("notify-test").handler("", { cwd: "/work/my-project", ui: { notify() {} } });
-	await setImmediate();
-	assert.equal(h.calls.length, 0);
-	assert.equal(resolutions, 0);
-});
-
-test("focus clears native permission and uniquely grouped completion alerts without making a decision", async (t) => {
-	t.mock.timers.enable({ apis: ["setInterval"] });
-	let focused = false;
-	let removed = 0;
-	let nativeDelivered;
-	const sender = (_notice, _group, delivered) => {
-		nativeDelivered = delivered;
-		return () => { removed++; };
-	};
-	const h = await harness(t, false, async () => focused, sender);
-	let resolutions = 0;
-	h.bus.on(PERMISSION_RESOLVED, () => { resolutions++; });
-	await h.request();
-	for (let i = 0; i < 2; i++) {
-		await h.handlers.get("agent_end")({}, { cwd: "/work/my-project" });
-		await setImmediate();
-	}
-	const sent = [...h.calls];
-	const groups = sent.map(call => call.args[call.args.indexOf("-group") + 1]);
-	assert.equal(new Set(groups).size, 2, "completion groups must not remove other turns/sessions");
-	focused = true;
-	t.mock.timers.tick(1000); await setImmediate();
-	assert.equal(removed, 1);
-	assert.deepEqual(h.calls.slice(2).map(call => call.args.slice(0, 2)), groups.map(group => ["-remove", group]));
-	assert.equal(resolutions, 0, "acknowledging notifications cannot approve or reject a request");
-	nativeDelivered();
-	assert.equal(removed, 2, "late native delivery is cleaned up too");
-	sent[0].callback(null);
-	assert.deepEqual(h.calls.at(-1).args.slice(0, 2), ["-remove", groups[0]]);
+test("Intercom namespace registration is acknowledged once in either extension load ordering", () => {
+	let registrations = 0;
+	const channel = { snapshot: () => ({ connected: false }), listSessions: async () => [] };
+	const late = harness();
+	late.bus.on("intercom:extension-register", registration => {
+		assert.equal(++registrations, 1, "registry rejects duplicate namespaces"); registration.onReady(channel);
+	});
+	late.bus.emit("intercom:extension-registry-ready"); late.handlers.get("session_start")({}, late.ctx);
+	late.bus.emit("intercom:extension-registry-ready"); late.handlers.get("session_start")({}, late.ctx);
+	assert.equal(registrations, 1); late.handlers.get("session_shutdown")();
+	const early = harness(channel);
+	early.bus.on("intercom:extension-register", () => assert.fail("factory already registered this namespace"));
+	early.handlers.get("session_start")({}, early.ctx); early.bus.emit("intercom:extension-registry-ready");
+	early.handlers.get("session_shutdown")();
 });

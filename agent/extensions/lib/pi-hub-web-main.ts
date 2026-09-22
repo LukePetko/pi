@@ -10,6 +10,10 @@ import { startHubServer } from "./pi-hub-web-server.ts";
 import { IntercomHubSource } from "./pi-hub-web-source.ts";
 import { withHubTodos } from "./hub-todo-source.ts";
 
+import { openHubNotifications } from "./hub-notifications.ts";
+import { notificationOriginAuthority } from "./hub-notification-origin.ts";
+import { createHubNotificationSender } from "./hub-notification-native.ts";
+
 const execute = promisify(execFile);
 
 async function focusInWorker(pid: number, signal: AbortSignal): Promise<void> {
@@ -29,6 +33,7 @@ async function serve(endpointFile: string): Promise<void> {
 	const source = new IntercomHubSource();
 	const shutdown = new AbortController();
 	let server: Awaited<ReturnType<typeof startHubServer>> | undefined;
+	let notifications: Awaited<ReturnType<typeof openHubNotifications>> | undefined;
 	let stopping = false;
 	let stopPromise: Promise<void> | undefined;
 	let finishStartup!: () => void;
@@ -42,11 +47,15 @@ async function serve(endpointFile: string): Promise<void> {
 		const forceExit = setTimeout(() => process.exit(0), 2_000);
 		stopPromise = (async () => {
 			await startupFinished;
+			await notifications?.close();
 			await server?.close();
 			await source.close();
 			const endpoint = await readEndpoint(endpointFile);
 			if (endpoint?.token === token) await unlink(endpointFile).catch(() => {});
 			await logHubLifecycle(stateDir, "stopped");
+			// Revocation is already durable; allow owned cleanup until the existing
+			// two-second deadline, without keeping the resident alive on a slow helper.
+			await notifications?.drain();
 			clearTimeout(forceExit);
 		})();
 		return stopPromise;
@@ -54,7 +63,18 @@ async function serve(endpointFile: string): Promise<void> {
 	process.on("SIGTERM", () => void stop());
 	process.on("SIGINT", () => void stop());
 	async function initialize(): Promise<void> {
+		const reportNotification = (message: string) => {
+			void logHubLifecycle(stateDir, message).catch(() => {});
+		};
+		notifications = await openHubNotifications({
+			file: join(stateDir, "notifications.json"), scope: stateDir,
+			sender: createHubNotificationSender(endpointFile, { report: reportNotification }),
+			report: () => reportNotification("Notification delivery/cleanup failed or uncertain; no replay or automatic permission decision"),
+			authority: notificationOriginAuthority(source, join(stateDir, "permissions")),
+		});
+		if (stopping) return;
 		server = await startHubServer({
+			notifications,
 			source: withHubTodos(source), token, instance, capabilities: HUB_CAPABILITIES, lifetime: "resident",
 			stateFile: join(stateDir, "session.json"),
 			focus: (pid) => focusInWorker(pid, shutdown.signal),
