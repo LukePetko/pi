@@ -36,7 +36,7 @@ function age(timestamp: number | null | undefined): string {
 }
 function applyPending(): void { board.apply(); render(); }
 
-async function post(path: string, body: { id: string; requestId?: string; decision?: PermissionDecision; lastAgentEnd?: number | null }, signal?: AbortSignal) {
+async function post(path: string, body: { id: string; requestId?: string; decision?: PermissionDecision; lastAgentEnd?: number | null; lifecycleGeneration?: string }, signal?: AbortSignal) {
 	const response = await fetch(path, { method: "POST", headers: {
 		Authorization: `Bearer ${token}`, "Content-Type": "application/json",
 	}, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000) });
@@ -60,7 +60,7 @@ async function acknowledge(id: string): Promise<void> {
 	// Capture what the person actually saw before applying the pending snapshot.
 	const lastAgentEnd = session.lastAgentEnd;
 	applyPending(); acknowledging.add(id); showNotice(""); updateAvailability();
-	try { await post("/api/ack", { id, lastAgentEnd }); }
+	try { await post("/api/ack", { id, lastAgentEnd, lifecycleGeneration: session.lifecycleGeneration }); }
 	catch (error) { showNotice(error instanceof Error ? error.message : "Could not accept result"); }
 	finally { acknowledging.delete(id); updateAvailability(); }
 }
@@ -70,7 +70,10 @@ async function permissionAction(id: string, requestId: string, signal: AbortSign
 	if (decision) applyPending();
 	const live = board.pending.sessions.find(session => session.id === id);
 	if (!live?.permissions?.some(item => item.id === requestId)) throw new Error("Request is no longer pending. Refresh the board.");
-	return post(`/api/permissions/${decision ? "decision" : "inspect"}`, { id, requestId, decision }, signal);
+	const result = await post(`/api/permissions/${decision ? "decision" : "inspect"}`, { id, requestId, decision }, signal);
+	if (decision && board.followPermission(live, requestId,
+		result.snapshot?.sessions.find((session: HubSession) => session.id === id))) render();
+	return result;
 }
 
 function updateAvailability(): void {
@@ -150,9 +153,9 @@ function paint(view: ReturnType<typeof createCard>, session: HubSession): void {
 	card.querySelector<HTMLElement>(".reentry")!.hidden = !reentry;
 	text(card, ".goal", session.displayName || session.cwd);
 	text(card, ".done", session.todos ? `${session.todos.completed} of ${session.todos.total} todos completed.` : "No task progress published.");
-	text(card, ".needs", session.reason === "error" ? "Error details are unavailable in Phase 1. Open the terminal."
-		: session.reason === "prompt" ? "Prompt details are unavailable in Phase 1. Open the terminal."
-			: `Returned with open todos${session.todos?.current ? `: ${session.todos.current}` : ""}. Open the terminal for the actual question.`);
+	text(card, ".needs", session.reason === "prompt" ? "An extension is waiting for input. Open the terminal to answer."
+		: session.lastAssistantText || (session.reason === "error" ? "The agent failed or was aborted. Open the terminal for details."
+			: `Returned with open todos${session.todos?.current ? `: ${session.todos.current}` : ""}. Open the terminal for the actual question.`));
 	card.querySelector<HTMLElement>(".permission-caption")!.hidden = session.reason !== "permission";
 	card.querySelector<HTMLButtonElement>(".ack")!.hidden = !review;
 	card.querySelector<HTMLButtonElement>(".reply-unavailable")!.hidden = !(review || reentry);

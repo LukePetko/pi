@@ -9,8 +9,9 @@ import { inspectPermission, decidePermission, describePermission, readPermission
 	type PermissionRequest } from "./hub-permissions.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { SessionInfo } from "../../npm/node_modules/pi-intercom/types.ts";
+import type { LifecycleFields } from "./hub-lifecycle.ts";
 
-export interface HubSession extends SessionInfo, Partial<AttentionFields> {
+export interface HubSession extends SessionInfo, Partial<AttentionFields>, Partial<LifecycleFields> {
 	todos?: HubTodos;
 	permissions?: AttentionPermission[];
 }
@@ -23,7 +24,7 @@ export interface HubSnapshot {
 export interface HubSource {
 	snapshot(): HubSnapshot;
 	subscribe(listener: () => void): () => void;
-	resolveSession(id: string): Promise<SessionInfo | undefined>;
+	resolveSession(id: string): Promise<HubSession | undefined>;
 }
 
 export interface HubServerOptions {
@@ -59,7 +60,7 @@ function reply(res: ServerResponse, status: number, body: HubReply): void {
 	res.end(JSON.stringify(body));
 }
 
-async function readTarget(req: IncomingMessage): Promise<{ id: string; lastAgentEnd?: number }> {
+async function readTarget(req: IncomingMessage): Promise<{ id: string; lastAgentEnd?: number; lifecycleGeneration?: string }> {
 	let body = "";
 	for await (const chunk of req) {
 		body += chunk.toString();
@@ -71,7 +72,10 @@ async function readTarget(req: IncomingMessage): Promise<{ id: string; lastAgent
 			throw new Error("A session ID is required");
 		}
 		if (data.lastAgentEnd !== undefined && (!Number.isFinite(data.lastAgentEnd) || data.lastAgentEnd < 0)) throw new Error("Invalid completion stamp");
-		return { id: data.id, lastAgentEnd: data.lastAgentEnd };
+		if (data.lifecycleGeneration !== undefined &&
+			(typeof data.lifecycleGeneration !== "string" || data.lifecycleGeneration.length > 64))
+			throw new Error("Invalid lifecycle generation");
+		return { id: data.id, lastAgentEnd: data.lastAgentEnd, lifecycleGeneration: data.lifecycleGeneration };
 	} catch {
 		throw new Error("Invalid session ID request");
 	}
@@ -108,10 +112,13 @@ export async function startHubServer(options: HubServerOptions) {
 		}
 	}
 
-	function snapshot(replacement?: SessionInfo): HubSnapshot {
+	function snapshot(replacement?: HubSession): HubSnapshot {
 		const state = source.snapshot();
 		return { ...state, sessions: state.sessions.map(original => {
 			const session = replacement?.id === original.id && replacement.pid === original.pid && replacement.startedAt === original.startedAt
+				&& replacement.endpointEpoch === original.endpointEpoch
+				// Presence timestamps cannot order producer lifecycle changes.
+				&& original.turnState === undefined && replacement.turnState === undefined
 				&& (!Number.isFinite(original.lastActivity) || replacement.lastActivity > original.lastActivity)
 				? { ...original, ...replacement } : original;
 			const permissions = (session.permissions ?? []).filter(item => !settled.has(permissionKey(session, item.id)))
@@ -163,13 +170,19 @@ export async function startHubServer(options: HubServerOptions) {
 			const fresh = await source.resolveSession(target.id);
 			const current = snapshot().sessions.find(session => session.id === target.id);
 			if (!fresh || !current) { reply(res, 404, { error: "Session is no longer available" }); return; }
+			const real = fresh.turnState !== undefined;
+			const at = real ? fresh.lastAgentEnd : fresh.lastActivity;
 			if (!source.snapshot().connected || fresh.pid !== current.pid || fresh.startedAt !== current.startedAt
-				|| lifecycleStatus(fresh.status) !== "idle" || lifecycleStatus(current.status) !== "idle" || current.lastActivity > fresh.lastActivity
-				|| current.permissions?.length || !Number.isFinite(fresh.lastActivity) || fresh.lastActivity < 0
-				|| (target.lastAgentEnd !== undefined && target.lastAgentEnd !== fresh.lastActivity)) {
+				|| fresh.endpointEpoch !== current.endpointEpoch || fresh.lifecycleGeneration !== current.lifecycleGeneration
+				|| (target.lifecycleGeneration !== undefined && target.lifecycleGeneration !== fresh.lifecycleGeneration)
+				|| (real ? fresh.turnState !== "returned" || current.turnState !== "returned" || current.lastAgentEnd !== at
+					: current.turnState !== undefined || lifecycleStatus(fresh.status) !== "idle" || lifecycleStatus(current.status) !== "idle")
+				|| current.lastActivity > fresh.lastActivity || current.permissions?.length
+				|| at == null || !Number.isFinite(at) || at < 0
+				|| (target.lastAgentEnd !== undefined && target.lastAgentEnd !== at)) {
 				reply(res, 409, { error: "Session changed or is still working/waiting for permission. Refresh before accepting." }); return;
 			}
-			await acknowledgements.set(fresh.id, fresh.lastActivity);
+			await acknowledgements.set(fresh.id, at);
 			const value = snapshot(fresh);
 			reply(res, 200, { ok: true, snapshot: value });
 			broadcast(value);
