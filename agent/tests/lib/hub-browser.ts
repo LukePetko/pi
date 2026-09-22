@@ -25,6 +25,16 @@ interface PendingCall {
 	timer: ReturnType<typeof setTimeout>;
 }
 
+/** Chrome may expose the port file before it has finished writing both lines. */
+export function chromeDevToolsAddress(contents: string): string | undefined {
+	const lines = contents.trim().split(/\r?\n/);
+	if (lines.length !== 2) return undefined;
+	const [port, path] = lines;
+	if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535
+		|| !/^\/devtools\/browser\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path)) return undefined;
+	return `ws://127.0.0.1:${port}${path}`;
+}
+
 /** Minimal CDP driver using Node's WebSocket; no browser automation dependency. */
 export async function openTestBrowser(t: TestContext, executable: string) {
 	const profile = await mkdtemp("/tmp/pi-hub-chrome-");
@@ -51,10 +61,10 @@ export async function openTestBrowser(t: TestContext, executable: string) {
 	for (let attempt = 0; attempt < 100; attempt++) {
 		if (launchError) throw launchError;
 		try {
-			const [port, path] = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
-			address = `ws://127.0.0.1:${port}${path}`;
-			break;
-		} catch { await sleep(100); }
+			address = chromeDevToolsAddress(await readFile(join(profile, "DevToolsActivePort"), "utf8"));
+			if (address) break;
+		} catch { /* Chrome has not published its debugging endpoint yet. */ }
+		await sleep(100);
 	}
 	if (!address) throw new Error("Chrome did not start its debugging endpoint");
 	socket = new WebSocket(address);

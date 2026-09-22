@@ -73,7 +73,7 @@ export default async function (pi) {
 		assert.equal(notificationEvents[0].data.title, full.title);
 		await hubHandlers.get("session_start")({}, ctx);
 		const viewingHub = hubCommands.get("hub").handler("", ctx);
-		await waitFor(() => hub !== undefined);
+		await waitFor(() => hub !== undefined && hub.render(180).join("\n").includes("Permission needed"));
 		colors.length = 0;
 		assert.match(hub.render(180).join("\n"), /Permission needed/);
 		assert.ok(colors.some(({ color, text }) => color === "warning" && text === "Permission needed"), "label must be yellow, not just its dot");
